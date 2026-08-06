@@ -37,6 +37,10 @@ const PAGES = [
   // GZ-JP-202 商品详情：标志元素取页面根容器（loading/error/正文三态都在它里面）。
   // 不用 .jp-product-notice —— 那个只在正文态渲染，取数失败时会把「页面可达」误判成 fail。
   { path: '/pages/product/detail?id=1', accept: ['pages/product/detail'], must: '.jp-product-detail' },
+  // GZ-JP-203 购物车：标志元素取页面根容器 .jp-cart —— loading / 游客 / 取数失败 / 空车 / 有数据
+  // 五态都渲染这个节点。不用 .jp-cart-bar（底部条只在有数据时才有，smoke 不保证登录态更不保证车里有东西）。
+  // 深度断言（加购真落库 / 三跳可达 / 合计 / 去结算闸门）在独立的 cart flow 里。
+  { path: '/pages/cart/index', accept: ['pages/cart/index'], must: '.jp-cart' },
 ]
 const MIN_VIEWS = 3
 

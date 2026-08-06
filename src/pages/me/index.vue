@@ -16,6 +16,7 @@ import type { GzUserMeVO } from '@/api/gz-user'
 import type { MeGridItem } from '@/components/biz/MeGrid.vue'
 import { onShow } from '@dcloudio/uni-app'
 import { computed, ref } from 'vue'
+import { CART_ROUTE } from '@/api/gz-jp/cart'
 import { getMe } from '@/api/gz-user'
 import { useAuth } from '@/hooks/useAuth'
 import { t } from '@/locale/user.zh-CN'
@@ -45,16 +46,22 @@ const avatarUrl = computed(() => me.value?.avatarUrl ?? '')
  * 并在 ROUTE_MAP 补 orders 路由。
  */
 const gridItems = computed<MeGridItem[]>(() => [
+  // 购物车（GZ-JP-203）：商品详情底部那个入口只在看商品时才有，这里是「随时能回去」的常驻入口
+  { key: 'cart', icon: '🛒', label: t('user.home.entryCart'), type: 'nav' },
   { key: 'about', icon: 'ℹ️', label: t('user.home.entryAbout'), type: 'nav' },
 ])
 
 /** 入口格跳转目标（真实路由，无占位）。 */
 const ROUTE_MAP: Record<string, string> = {
+  cart: CART_ROUTE,
   about: '/pages/me/about',
 }
 
-/** 需登录才能进的入口 key（其余直接跳）。 */
-const LOGIN_REQUIRED_KEYS = new Set<string>([])
+/**
+ * 需登录才能进的入口 key（其余直接跳）。
+ * 购物车是用户私有数据（后端四个端点都需登录）→ 游客点这里先弹协议同意 sheet 走微信登录。
+ */
+const LOGIN_REQUIRED_KEYS = new Set<string>(['cart'])
 
 async function loadMe() {
   if (!isLoggedIn()) {

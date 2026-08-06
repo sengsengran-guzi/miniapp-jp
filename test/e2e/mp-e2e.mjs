@@ -174,3 +174,56 @@ export async function logoutIfLoggedIn(mp) {
   await mp.restoreWxMethod('showModal').catch(() => {})
   return true
 }
+
+/**
+ * 把 app 确定性拨到<b>已登录</b>态（{@link logoutIfLoggedIn} 的对侧）。
+ *
+ * <p>走的仍是<b>真实用户路径</b>（首页「我的订单」入口 → 协议 sheet → 主动勾选 → 点登录），
+ * 不是后门注 storage —— 需要登录态的 flow（购物车 / 下单）顺带把「协议闸门没被绕过」也守住了。
+ * 已登录则直接返回，不做多余的登出再登录（省 5 秒，也避免把别的 flow 造的数据洗掉）。</p>
+ *
+ * @returns {Promise<boolean>} 结束时是否处于登录态
+ */
+export async function loginIfNeeded(mp) {
+  const me = await gotoPage(mp, '/pages/me/index', 1200)
+  if (await me.$('.logout-btn').catch(() => null)) return true
+
+  const home = await gotoPage(mp, '/pages/index/index', 1500)
+  const cta = await home.$('.jp-entry-card').catch(() => null)
+  if (!cta) throw new Error('首页找不到登录触发点 .jp-entry-card（订单入口没渲染？）')
+  await cta.tap()
+  await sleep(1200)
+
+  const box = await home.$('.login-agree__box').catch(() => null)
+  const btn = await home.$('.login-sheet__cta').catch(() => null)
+  if (!box || !btn) {
+    throw new Error('点首页订单入口后没弹出协议同意 sheet（合规闸门失效，或误判为已登录态）')
+  }
+  await box.tap()
+  await sleep(400)
+  await btn.tap()
+  await sleep(3500)
+
+  const meAfter = await gotoPage(mp, '/pages/me/index', 1800)
+  return !!(await meAfter.$('.logout-btn').catch(() => null))
+}
+
+/**
+ * 读 app 当前持有的 sa-token（pinia 持久化 key='token'，见 store/token.ts `persist: true`）。
+ *
+ * <p>用途：需要登录态的 flow 要用<b>同一个用户</b>的身份直连后端当独立数据源
+ * （光断言「页面上有 3 行」证明不了那 3 行是真的落库了）。从 app 自己的 storage 里取，
+ * 而不是 flow 另调一次 wx-login —— 后者会拿到<b>另一个会话</b>，看到的车可能不是页面上那辆。</p>
+ *
+ * @returns {Promise<string>} token；取不到返回空串
+ */
+export async function readAppToken(mp) {
+  const raw = await mp.callWxMethod('getStorageSync', 'token').catch(() => null)
+  if (!raw) return ''
+  let obj = raw
+  if (typeof raw === 'string') {
+    try { obj = JSON.parse(raw) } catch { return '' }
+  }
+  // 单 token 模式落 tokenInfo.token；双 token 模式落 tokenInfo.accessToken（本项目是单 token）
+  return String(obj?.tokenInfo?.token || obj?.tokenInfo?.accessToken || obj?.token || '')
+}

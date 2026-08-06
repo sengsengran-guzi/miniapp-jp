@@ -22,22 +22,27 @@
  * 顺序由 {@code SECTION_ORDER} 常量 + 单测锁死，正文完整性由 {@code buildNoticeText} 保证
  * （商家漏填时兜底一段通用提示，区块本身从不消失）。</p>
  *
- * <p><b>★ 加购是占位交互</b>：购物车域归 GZ-JP-104（后端）/ GZ-JP-203（购物车页），本卡不实现。
- * 点「加入购物车」只 toast「购物车即将上线」——<b>刻意不写入任何本地/远端购物车</b>，
- * 不制造一个看起来能用其实是假的功能。接真购物车时的改法见完工报告「对下游提示」。</p>
+ * <p><b>★ 加购是真的</b>（GZ-JP-203 起）：点「加入购物车」→ {@code ensureLoggedIn}（购物车是
+ * 用户私有数据，四个端点都需登录）→ {@code POST /app/gz/jp/cart} → 成功后刷新 CTA 条上的
+ * 购物车角标。同商品重复加购由后端<b>累加数量</b>，不会产生第二行。</p>
  *
  * <p><b>加购置灰唯一依据 = 后端 {@code eventBookable}</b>（{@code buildAddToCartState}）：
- * 不判 {@code status}、不拿场的 endTime 跟本地时钟比（店员手动关场判不出来 + 客户端时钟不可信）。</p>
+ * 不判 {@code status}、不拿场的 endTime 跟本地时钟比（店员手动关场判不出来 + 客户端时钟不可信）。
+ * <b>前端置灰只是体验层</b>，后端加购时还会用 {@code isBookable} 再拦一道。</p>
  *
- * <p><b>游客优先</b>：商品详情匿名可读（后端 &#64;SaIgnore），浏览不需要登录态。</p>
+ * <p><b>游客优先</b>：商品详情匿名可读（后端 &#64;SaIgnore），浏览不需要登录态；
+ * 只有点加购才触发协议同意 sheet 走微信登录。</p>
  */
 import type { GzJpProductMpVO } from '@/api/gz-jp/product'
-import { onLoad } from '@dcloudio/uni-app'
+import { onLoad, onShow } from '@dcloudio/uni-app'
 import { computed, ref } from 'vue'
+import { addToCart, CART_ROUTE, fetchCart } from '@/api/gz-jp/cart'
 import { formatYuan } from '@/api/gz-jp/format'
 import { fetchProductDetail } from '@/api/gz-jp/product'
+import { useAuth } from '@/hooks/useAuth'
 import { t } from '@/locale/product.zh-CN'
 import { buildAddToCartState, HOME_ROUTE } from '../event/index.logic'
+import { formatBadgeCount } from '../index/index.logic'
 import {
   buildGalleryImages,
   buildNoticeText,
@@ -53,6 +58,8 @@ definePage({
     navigationBarTitleText: '商品详情',
   },
 })
+
+const { isLoggedIn, ensureLoggedIn } = useAuth()
 
 /* ── 路由参数 ─────────────────────────────────────────────── */
 
@@ -126,20 +133,78 @@ function onQuantityChange(value: number) {
   quantity.value = clampQuantity(value)
 }
 
-/* ── 交互 ────────────────────────────────────────────────── */
+/* ── 购物车角标 ──────────────────────────────────────────── */
 
 /**
- * 点「加入购物车」。
+ * CTA 条左侧购物车入口的款数角标。
  *
- * <p>场已结束 → 明确告知不能加购；否则 → <b>占位提示</b>（购物车归 GZ-JP-104/203）。
- * 两条分支都<b>不写任何购物车数据</b>，页面也不给「已加入」的成功反馈。</p>
+ * <p>游客不显示（购物车是登录后的私有数据，游客的车恒为空）。拉取失败只是不显示角标 ——
+ * 角标是附属信息，不该因为它挂了就打扰正在看商品的客人。</p>
  */
-function onAddToCart() {
+const cartCount = ref(0)
+const cartBadge = computed(() => formatBadgeCount(cartCount.value))
+
+async function refreshCartCount() {
+  if (!isLoggedIn()) {
+    cartCount.value = 0
+    return
+  }
+  try {
+    const c = await fetchCart()
+    cartCount.value = c?.itemCount ?? 0
+  }
+  catch (e) {
+    console.warn('[jp-product] refreshCartCount failed', e)
+    cartCount.value = 0
+  }
+}
+
+/* ── 交互 ────────────────────────────────────────────────── */
+
+/** 加购中（防连点打出两笔累加）。 */
+const adding = ref(false)
+
+/**
+ * 点「加入购物车」（GZ-JP-203 起是<b>真加购</b>）。
+ *
+ * <p>三步：场已结束先拦（置灰态兜底提示）→ {@code ensureLoggedIn}（购物车需登录，
+ * 游客会弹协议同意 sheet；用户取消则什么也不做）→ {@code POST /app/gz/jp/cart}。</p>
+ *
+ * <p>成功后<b>停留在本页</b>只 toast + 刷新角标，不自动跳购物车 ——
+ * 客人加一件通常还要接着挑下一件，跳走等于每加一件都要退回来一次。
+ * 要去购物车走 CTA 条左侧那个入口（角标已经变了，看得见）。</p>
+ *
+ * <p>失败（商品刚被下架 / 场刚关 / 超上限 / 车里款数触顶）由 http.ts 统一 toast 后端原文，
+ * 这里不再叠一层自己的提示 —— 后端的话比「加入失败」有用得多。</p>
+ */
+async function onAddToCart() {
   if (ctaDisabled.value) {
     uni.showToast({ title: t('product.endedToast'), icon: 'none' })
     return
   }
-  uni.showToast({ title: t('product.addToCartComingSoon'), icon: 'none' })
+  if (adding.value || !product.value) {
+    return
+  }
+  if (!(await ensureLoggedIn())) {
+    return
+  }
+  adding.value = true
+  try {
+    await addToCart(String(product.value.id), quantity.value)
+    uni.showToast({ title: t('product.addToCartSuccess'), icon: 'none' })
+    await refreshCartCount()
+  }
+  catch (e) {
+    console.warn('[jp-product] addToCart failed', e)
+  }
+  finally {
+    adding.value = false
+  }
+}
+
+/** 点 CTA 条左侧购物车入口 → 购物车页（业务主线真入口，不是临时入口）。 */
+function goCart() {
+  uni.navigateTo({ url: CART_ROUTE })
 }
 
 /** 取数失败 / 用户想回退时的出口：有上一页就返回，直达进来的（分享链接）回首页 tab。 */
@@ -165,6 +230,11 @@ onLoad((query?: Record<string, string | undefined>) => {
   }
   productId.value = id
   void load(id)
+})
+
+// 每次回到本页都刷角标（从购物车页删了东西再返回，角标要跟着降）
+onShow(() => {
+  void refreshCartCount()
 })
 </script>
 
@@ -271,8 +341,13 @@ onLoad((query?: Record<string, string | undefined>) => {
         <!-- 底部 fixed CTA 让位 -->
         <view class="jp-product-detail__spacer" />
 
-        <!-- ⑥ 底部固定 CTA：数量 stepper + 加入购物车 -->
+        <!-- ⑥ 底部固定 CTA：购物车入口 + 数量 stepper + 加入购物车 -->
         <view class="jp-product-cta">
+          <!-- 购物车入口（GZ-JP-203）：加购后角标就在旁边变，客人看得见「东西进去了」 -->
+          <view class="jp-product-cta__cart" @tap="goCart">
+            <text class="jp-product-cta__cart-icon">🛒</text>
+            <text v-if="cartBadge" class="jp-product-cta__cart-badge">{{ cartBadge }}</text>
+          </view>
           <view class="jp-product-cta__qty">
             <text class="jp-product-cta__qty-label">{{ t('product.quantityLabel') }}</text>
             <BizStepper
@@ -473,6 +548,42 @@ onLoad((query?: Record<string, string | undefined>) => {
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: saturate(180%) blur(16px);
   border-top: var(--c-bw-3) solid var(--c-line);
+}
+/* 购物车入口（GZ-JP-203）：图标 + 右上角款数角标 */
+.jp-product-cta__cart {
+  position: relative;
+  width: 72rpx;
+  height: 72rpx;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--c-radius);
+  background: rgba(33, 29, 23, 0.04);
+
+  &:active {
+    opacity: 0.7;
+  }
+}
+.jp-product-cta__cart-icon {
+  font-size: 36rpx;
+  line-height: 1;
+}
+.jp-product-cta__cart-badge {
+  position: absolute;
+  top: -6rpx;
+  right: -6rpx;
+  min-width: 30rpx;
+  height: 30rpx;
+  padding: 0 6rpx;
+  box-sizing: border-box;
+  border-radius: var(--c-radius-pill);
+  background: var(--c-red);
+  color: var(--c-on-dark);
+  font-size: var(--c-fs-3xs);
+  font-weight: 700;
+  line-height: 30rpx;
+  text-align: center;
 }
 .jp-product-cta__qty {
   display: flex;

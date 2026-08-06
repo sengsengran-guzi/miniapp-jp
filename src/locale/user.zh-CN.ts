@@ -22,6 +22,8 @@ const userHomeZhCN = {
   loggedInSub: '会员中心',
   /** 入口格 label */
   entryOrders: '我的订单',
+  /** 购物车常驻入口（GZ-JP-203；商品详情底部那个只在看商品时才有） */
+  entryCart: '购物车',
   entryAbout: '关于',
   /** 功能区分组标题 */
   sectionTitle: '会员中心',

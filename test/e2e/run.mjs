@@ -23,6 +23,7 @@ const FLOWS = {
   login: () => import('./flows/login.mjs'),
   home: () => import('./flows/home.mjs'),
   product: () => import('./flows/product.mjs'),
+  cart: () => import('./flows/cart.mjs'),
 }
 
 /**

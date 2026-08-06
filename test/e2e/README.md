@@ -46,6 +46,13 @@ node test/e2e/run.mjs home
 # 依赖 dev 库里至少有 1 个开过的场，且该场至少 1 件 on_shelf 商品
 node test/e2e/run.mjs product
 
+# 加购到结算全流程（GZ-JP-203）。★ 需登录态（flow 自己走真实登录路径），并用 app 自己的 token
+# 直连后端当独立数据源：点「加入购物车」后断言**后端购物车真多了一行**（不是看 toast）、
+# 三跳可达购物车、按场分组、合计 == validAmountCent、改数量后前后端都跟着变、
+# 「去结算」闸门双向（全不选置灰 / 全选可点）、底部只有商品合计一行。
+# ⚠️ 会先清空该测试用户的购物车拿确定性起点（dev 的 wxMOCK 用户，userId=14）
+node test/e2e/run.mjs cart
+
 # 全部（串行）
 node test/e2e/run.mjs all
 
@@ -114,7 +121,11 @@ preflight 第 3 项就是为了把这半天排查压成一句话。
 ## 加新 flow（后续所有 mp ticket 都要做）
 
 1. 写 `flows/<page>.mjs`，导出 `async run(mp)`，用 `mp-e2e.mjs` 的
-   `gotoPage / assertRendered / screenshot / sleep`；登录态用 `logoutIfLoggedIn / readPersistedUser / hasAgreedPrivacy`。
+   `gotoPage / assertRendered / screenshot / sleep`；登录态用
+   `logoutIfLoggedIn / loginIfNeeded / readAppToken / readPersistedUser / hasAgreedPrivacy`。
+   **需要登录的 flow**（购物车 / 下单）：`loginIfNeeded(mp)` 拨到登录态 → `readAppToken(mp)` 拿
+   **app 自己那个会话**的 sa-token 去直连后端当独立数据源（别另调一次 wx-login —— 那是另一个会话，
+   看到的车可能不是页面上那辆）。
 2. 在 `run.mjs` 的 `FLOWS` 注册表加一行。
 3. **新页只是可达性**的话，不用新开 flow —— 往 `flows/smoke.mjs` 的 `PAGES` 加一行即可
    （这就是 mp ticket「AC X(a) AI 模拟器可达」的落点）。
@@ -131,10 +142,17 @@ node test/e2e/self-test.mjs     # 0 = 全过
 - **flow 代码写错**（选择器打错 / 断言写反 / 漏 await）→ self-test 就红 → 改代码；
 - **本机环境不行**（IDE 没登录 / 端口关 / 卡死）→ self-test 绿、`run.mjs` 红 → 修环境，代码是好的。
 
-写 negative 场景不是可选项：只写 happy 的断言常年恒真，等于没写。现有 30 个用例里 **16 个是 negative**
+写 negative 场景不是可选项：只写 happy 的断言常年恒真，等于没写。现有 46 个用例里 **30 个是 negative**
 （缺标志元素 / 渲染空壳 / 协议框默认勾选 / 登成另一个小程序的用户 / banner 塌陷 / 分组顺序错 /
 跳错页 / 页面显示前端 mock 文案 / 已结束提示条与后端状态不符 / 价格换算错 / 缺包邮标识 /
-注意事项被截断 / 注意事项排到 CTA 之后 / **加购置灰态与 eventBookable 不符**（两个方向各一条）/ fixture 空了）。
+注意事项被截断 / 注意事项排到 CTA 之后 / **加购置灰态与 eventBookable 不符**（两个方向各一条）/
+**加购没真落库** / **底部冒出第二笔费用** / 缺「已包邮」标注 / 改数量没落库 / 合计不跟后端 /
+**去结算闸门写死**（恒可点 / 恒置灰，两个方向各一条）/ 失效商品没标「已失效」/ 失效商品被算进合计 /
+购物车角标与后端款数对不上 / fixture 空了）。
+
+> cart 的假件比前几个复杂一档：它带一个**内存版后端**，假 app 的 tap 去写它、假页面从它渲染，
+> flow 拿到的 `readCart` 读的也是它 —— 于是「页面与后端对得上」这条断言在假件里同样有内容，
+> negative 只要让两者故意脱钩（加购不落库 / 合计写死 / 文案写死）就必然 fail。
 
 > **等待时长**：self-test 里假句柄的「渲染」是瞬时的，flow 中为真模拟器准备的 `sleep(2500)` 纯属空等，
 > flow 一多就把 self-test 拖到几分钟、于是没人愿意跑。所以 self-test 开头设 `MP_E2E_SLEEP_SCALE=0`，

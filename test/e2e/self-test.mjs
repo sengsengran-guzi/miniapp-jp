@@ -24,6 +24,7 @@ const { run: runSmoke } = await import('./flows/smoke.mjs')
 const { run: runLogin } = await import('./flows/login.mjs')
 const { runWith: runHomeWith } = await import('./flows/home.mjs')
 const { runWith: runProductWith } = await import('./flows/product.mjs')
+const { runWith: runCartWith } = await import('./flows/cart.mjs')
 
 /* ───────────────────────── 假 miniProgram 句柄 ───────────────────────── */
 
@@ -104,6 +105,8 @@ const ALL_PAGES = {
   // GZ-JP-202 新增两页
   'pages/event/index': { views: 16, els: { '.jp-event-detail__grid': {} } },
   'pages/product/detail': { views: 16, els: { '.jp-product-detail': {} } },
+  // GZ-JP-203 新增一页
+  'pages/cart/index': { views: 14, els: { '.jp-cart': {} } },
 }
 
 /** smoke 用：按路径查表，路径原样落地（无重定向）。 */
@@ -300,6 +303,224 @@ function beProduct(patch = {}) {
     products: patch.products || BE_PRODUCT.products.map(p => ({ ...p })),
     detail: patch.detail === null ? null : { ...BE_PRODUCT.detail, ...(patch.detail || {}) },
   }
+}
+
+/**
+ * cart 用（GZ-JP-203）：**假 app + 假后端**联动的场景机。
+ *
+ * <p>与前几个 flow 的假件不同，购物车是**读写混合**的流程：点加购要真往「后端」写一行、
+ * 点 + 号要真改数量、页面渲染要跟着「后端」变。所以这里造一个内存版后端 {@code be}，
+ * 假 app 的 tap 去改它、假页面从它渲染，而 flow 拿到的 {@code readCart} 读的也是它 ——
+ * 于是「页面与后端对得上」这条断言在假件里同样是**有内容的**，negative 用例只要让两者
+ * 故意脱钩（页面写死文案 / 合计不跟随 / 加购不落库）就必然 fail。</p>
+ *
+ * 每个可配项都对应一条 negative 能打到的点。
+ */
+function cartScenario({
+  priceCent = 12800,
+  /**
+   * 失效行（模拟「客人正要去结算时，另一个场刚被店员关掉」）。
+   *
+   * <p>刻意在**进购物车页那一刻**才注入后端，而不是一开始就有 —— flow 起手会
+   * {@code clearCart()} 拿确定性起点，一开始就放会被清掉；而且「加购后后端恰好 1 款」
+   * 这条断言（防加购写出两行）也必须留着。</p>
+   */
+  invalidRows = [],
+  /** 点加购是否真落库（false = 还是 202 的占位 toast） */
+  addToCartWorks = true,
+  /** 加购按钮是否置灰（模拟场已结束的 fixture） */
+  ctaDisabled = false,
+  /** 购物车入口跳到哪（negative：跳错页） */
+  hop3 = '/pages/cart/index',
+  /** 页面渲染的组名 / 商品名（negative：前端 mock 文案） */
+  renderGroupNames = null,
+  renderItemNames = null,
+  /** 页面合计写死不跟后端（negative） */
+  freezeTotal = false,
+  /** + 号是否真改后端数量（negative：改数量没落库） */
+  qtyPlusWorks = true,
+  /** 底部条额外文案（negative：多出一行费用） */
+  barExtraText = '',
+  /** 底部条不标「已包邮」（negative） */
+  omitIncludedNote = false,
+  /** 「去结算」恒置灰 / 恒可点（negative：闸门写死） */
+  checkoutAlwaysDisabled = false,
+  checkoutNeverDisabled = false,
+  /** 角标文案覆盖（negative：与后端款数对不上） */
+  badgeOverride = null,
+  /** 失效行是否渲染「已失效」标（negative） */
+  renderInvalidBadge = true,
+  /** 失效行金额是否被算进页面合计（negative） */
+  invalidCountedInTotal = false,
+} = {}) {
+  // ── 内存版后端
+  const be = { items: [] }
+  /** 把配置里的失效行注入后端（进购物车页那一刻触发，只注入一次）。 */
+  let invalidSeeded = false
+  const seedInvalid = () => {
+    if (invalidSeeded) return
+    invalidSeeded = true
+    for (const [i, r] of invalidRows.entries()) {
+      be.items.push({
+        id: `9${i}`,
+        productId: `9${i}`,
+        name: r.name,
+        eventName: r.eventName,
+        qty: r.qty ?? 1,
+        priceCent: r.priceCent ?? 9900,
+        invalid: true,
+        invalidText: r.invalidText ?? '本场已结束',
+      })
+    }
+  }
+  const EVENT_NAME = '8月上旬快闪场'
+  const PRODUCT = { id: '1', name: '柯南 吧唧 一番赏 A赏', priceCent, eventBookable: !ctaDisabled }
+
+  const readCart = () => {
+    const byEvent = new Map()
+    for (const it of be.items) {
+      const key = it.eventName
+      if (!byEvent.has(key)) byEvent.set(key, [])
+      byEvent.get(key).push({
+        id: it.id,
+        productId: it.productId,
+        name: it.name,
+        priceCent: it.priceCent,
+        qty: it.qty,
+        amountCent: it.priceCent * it.qty,
+        invalid: it.invalid,
+        invalidText: it.invalid ? it.invalidText : null,
+      })
+    }
+    const groups = [...byEvent.entries()].map(([eventName, items]) => ({
+      eventId: eventName === EVENT_NAME ? '1' : '2',
+      eventName,
+      eventBookable: items.every(i => !i.invalid),
+      items,
+    }))
+    const valid = be.items.filter(i => !i.invalid)
+    return {
+      groups,
+      itemCount: be.items.length,
+      invalidCount: be.items.length - valid.length,
+      validQty: valid.reduce((s, i) => s + i.qty, 0),
+      validAmountCent: valid.reduce((s, i) => s + i.priceCent * i.qty, 0),
+    }
+  }
+  const clearCart = () => {
+    const n = be.items.length
+    be.items = []
+    return n
+  }
+
+  // ── 页面状态
+  const st = { allSelected: true, frozenTotal: null }
+
+  const yuan = (cent) => {
+    const y = cent / 100
+    return Number.isInteger(y) ? String(y) : y.toFixed(2)
+  }
+  /** 页面渲染出来的合计（negative 可以让它与后端脱钩）。 */
+  const pageTotal = () => {
+    const c = readCart()
+    if (!st.allSelected) return '0'
+    if (freezeTotal && st.frozenTotal !== null) return st.frozenTotal
+    const base = invalidCountedInTotal
+      ? be.items.reduce((s, i) => s + i.priceCent * i.qty, 0)
+      : c.validAmountCent
+    const v = yuan(base)
+    if (freezeTotal && st.frozenTotal === null) st.frozenTotal = v
+    return v
+  }
+
+  const mp = makeMp({
+    storage: { token: JSON.stringify({ tokenInfo: { token: 'fake-sa-token-for-self-test', expiresIn: 999 } }) },
+    onTap: (sel) => {
+      if (sel === '.jp-event-card') mp.__goto('/pages/event/index')
+      if (sel === '.jp-product-card') mp.__goto('/pages/product/detail')
+      if (sel === '.jp-product-cta__btn' && addToCartWorks && !ctaDisabled) {
+        be.items.push({
+          id: '11',
+          productId: PRODUCT.id,
+          name: PRODUCT.name,
+          eventName: EVENT_NAME,
+          qty: 1,
+          priceCent,
+          invalid: false,
+        })
+      }
+      if (sel === '.jp-product-cta__cart') {
+        seedInvalid() // 「刚要去结算，另一个场被关了」
+        mp.__goto(hop3)
+      }
+      if (sel === '.biz-stepper__plus' && qtyPlusWorks) {
+        const row = be.items.find(i => !i.invalid)
+        if (row) row.qty += 1
+      }
+      if (sel === '.jp-cart-bar__all') st.allSelected = !st.allSelected
+    },
+    pageFor: (p) => {
+      const key = p.replace(/^\//, '')
+      const els = {}
+      const lists = {}
+      const cart = readCart()
+
+      if (key === 'pages/me/index') {
+        els['.me-header__top'] = {}
+        els['.logout-btn'] = {} // 恒登录态（登录路径本身由 login flow 的用例覆盖）
+      }
+      if (key === 'pages/index/index') {
+        els['.jp-event-card'] = { text: EVENT_NAME }
+        els['.jp-entry-card'] = { text: '我的订单' }
+      }
+      if (key === 'pages/event/index') {
+        els['.jp-event-detail__grid'] = {}
+        els['.jp-product-card'] = { text: PRODUCT.name }
+      }
+      if (key === 'pages/product/detail') {
+        els['.jp-product-detail'] = {}
+        els['.jp-product-cta__btn'] = {
+          attrs: { class: ctaDisabled ? 'jp-product-cta__btn is-disabled' : 'jp-product-cta__btn' },
+        }
+        els['.jp-product-cta__cart'] = {}
+        const badge = badgeOverride === null ? String(cart.itemCount) : badgeOverride
+        if (badge) els['.jp-product-cta__cart-badge'] = { text: badge }
+      }
+      if (key === 'pages/cart/index') {
+        els['.jp-cart'] = {}
+        const total = pageTotal()
+        const note = omitIncludedNote ? '' : '已包邮'
+        const barText = `全选 合计 ¥ ${total} ${note} ${barExtraText} 去结算`.replace(/\s+/g, ' ').trim()
+        els['.jp-cart-bar'] = {
+          text: barText,
+          wxml: `<view class="jp-cart-bar">${barText}</view>`,
+        }
+        els['.jp-cart-bar__total'] = { text: total }
+        els['.jp-cart-bar__all'] = {}
+        const disabled = checkoutAlwaysDisabled
+          ? true
+          : checkoutNeverDisabled ? false : !st.allSelected
+        els['.jp-cart-bar__checkout'] = {
+          attrs: { class: `jp-cart-bar__checkout${disabled ? ' is-disabled' : ''}` },
+        }
+        if (cart.itemCount > 0) els['.biz-stepper__plus'] = {}
+        lists['.jp-cart__group-name'] = renderGroupNames ?? cart.groups.map(g => g.eventName)
+        lists['.biz-cart-item__name'] = renderItemNames
+          ?? cart.groups.flatMap(g => g.items.map(i => i.name))
+        lists['.biz-cart-item__mask-text'] = renderInvalidBadge
+          ? cart.groups.flatMap(g => g.items.filter(i => i.invalid).map(() => '已失效'))
+          : []
+      }
+      return { path: key, views: 16, els, lists }
+    },
+  })
+  return { mp, data: { event: { id: '1', name: EVENT_NAME, status: 'open' }, product: PRODUCT, readCart, clearCart } }
+}
+
+/** 跑一个 cart 场景（把 scenario 拆好的 mp 与注入项喂给 flow 的断言主体）。 */
+function runCart(opts) {
+  const { mp, data } = cartScenario(opts)
+  return runCartWith(mp, data)
 }
 
 /* ───────────────────────────── 用例 ───────────────────────────── */
@@ -503,6 +724,96 @@ const CASES = [
     name: 'product / ★后端该场 0 件在架商品（fixture 没了）→ 必须 fail 而不是假绿',
     expect: /0 件在架商品/,
     run: () => runProductWith(productMp(), beProduct({ products: [], detail: null })),
+  },
+
+  /* ── cart（GZ-JP-203）─────────────────────────────────── */
+  {
+    name: 'cart / 三跳可达 + 加购真落库 + 分组 + 合计 + 改数量 + 去结算闸门双向 → 通过',
+    expect: 'pass',
+    run: () => runCart(),
+  },
+  {
+    name: 'cart / 车里已有一件失效商品（标「已失效」+ 不计入合计）→ 通过',
+    expect: 'pass',
+    run: () => runCart({
+      invalidRows: [{ name: 'B 场商品丙', eventName: '7月下旬场', qty: 3, priceCent: 9900 }],
+    }),
+  },
+  {
+    name: 'cart / ★★ 点加购但没真落库（还是占位 toast）→ 必须 fail',
+    expect: /后端购物车款数=0/,
+    run: () => runCart({ addToCartWorks: false }),
+  },
+  {
+    name: 'cart / ★加购按钮是置灰态（fixture 的场已结束）→ 必须 fail 并说清是 fixture 问题',
+    expect: /加购按钮是置灰态/,
+    run: () => runCart({ ctaDisabled: true }),
+  },
+  {
+    name: 'cart / ★第 3 跳跳错页（购物车入口路由与页面文件名对不上）→ 必须 fail',
+    expect: /第 3 跳失败/,
+    run: () => runCart({ hop3: '/pages/me/index' }),
+  },
+  {
+    name: 'cart / ★购物车显示前端 mock 组名（与后端场名对不上）→ 必须 fail',
+    expect: /没渲染成分组头|分组数对不上/,
+    run: () => runCart({ renderGroupNames: ['示例场次（假数据）'] }),
+  },
+  {
+    name: 'cart / ★购物车显示前端 mock 商品名 → 必须 fail',
+    expect: /没渲染出来/,
+    run: () => runCart({ renderItemNames: ['示例商品（假数据）'] }),
+  },
+  {
+    name: 'cart / ★★ 底部合计区出现「运费」行（违反 REQ-ORDER-004 全包邮）→ 必须 fail',
+    expect: /出现了另收费用的字样/,
+    run: () => runCart({ barExtraText: '运费 ¥12' }),
+  },
+  {
+    name: 'cart / ★底部合计旁没有「已包邮」标注 → 必须 fail',
+    expect: /没有「已包邮」标注/,
+    run: () => runCart({ omitIncludedNote: true }),
+  },
+  {
+    name: 'cart / ★改数量没落库（+ 号只改了本地）→ 必须 fail',
+    expect: /改数量没落库/,
+    run: () => runCart({ qtyPlusWorks: false }),
+  },
+  {
+    name: 'cart / ★后端数量变了但页面合计不跟（合计写死）→ 必须 fail',
+    expect: /改数量后合计没刷新|合计与改之前相同/,
+    run: () => runCart({ freezeTotal: true }),
+  },
+  {
+    name: 'cart / ★★ 取消全选后「去结算」仍可点（AC 置灰不成立）→ 必须 fail',
+    expect: /取消全选后「去结算」仍可点/,
+    run: () => runCart({ checkoutNeverDisabled: true }),
+  },
+  {
+    name: 'cart / ★「去结算」永远置灰（只测一个方向就会漏掉的那种写法）→ 必须 fail',
+    expect: /有勾选项时「去结算」却是置灰的/,
+    run: () => runCart({ checkoutAlwaysDisabled: true }),
+  },
+  {
+    name: 'cart / ★失效商品没标「已失效」→ 必须 fail',
+    expect: /没渲染「已失效」标/,
+    run: () => runCart({
+      invalidRows: [{ name: 'B 场商品丙', eventName: '7月下旬场' }],
+      renderInvalidBadge: false,
+    }),
+  },
+  {
+    name: 'cart / ★★ 失效商品被算进了合计 → 必须 fail',
+    expect: /失效项被算进了合计|合计与后端 validAmountCent|首次进页面（默认全选）合计对不上/,
+    run: () => runCart({
+      invalidRows: [{ name: 'B 场商品丙', eventName: '7月下旬场', qty: 3, priceCent: 9900 }],
+      invalidCountedInTotal: true,
+    }),
+  },
+  {
+    name: 'cart / ★加购后购物车角标与后端款数对不上 → 必须 fail',
+    expect: /购物车角标/,
+    run: () => runCart({ badgeOverride: '7' }),
   },
 ]
 
