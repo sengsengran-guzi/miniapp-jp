@@ -21,6 +21,7 @@ const MINIAPP = path.resolve(__dirname, '../..')
 const FLOWS = {
   smoke: () => import('./flows/smoke.mjs'),
   login: () => import('./flows/login.mjs'),
+  home: () => import('./flows/home.mjs'),
 }
 
 /**

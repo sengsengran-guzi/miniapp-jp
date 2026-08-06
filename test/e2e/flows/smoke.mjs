@@ -17,8 +17,10 @@ import { gotoPage, screenshot, SHOT_DIR } from '../mp-e2e.mjs'
  * must   = 该页必须渲染出的标志选择器（不给则只验 view 数）。
  */
 const PAGES = [
-  // 首页 tab（启动落地页）。.jp-hero__cta = 登录/个人资料主 CTA，两态都渲染这个节点。
-  { path: '/pages/index/index', accept: ['pages/index/index'], must: '.jp-hero__cta' },
+  // 首页 tab（启动落地页）。.jp-home__events = 场次区块容器，loading/error/empty/有数据
+  // 四态都渲染这个节点（GZ-JP-201 起；此前是脚手架的 .jp-hero__cta，首页重写后已不存在）。
+  // 首页三区块的深度断言在独立的 home flow 里，smoke 只管「可达 + 没渲染成空壳」。
+  { path: '/pages/index/index', accept: ['pages/index/index'], must: '.jp-home__events' },
   // 我的 tab。.me-header__top = 头像+昵称头部，未登录/已登录都渲染。
   { path: '/pages/me/index', accept: ['pages/me/index'], must: '.me-header__top' },
   { path: '/pages/me/about', accept: ['pages/me/about'] },

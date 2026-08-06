@@ -16,6 +16,7 @@
  */
 import { run as runSmoke } from './flows/smoke.mjs'
 import { run as runLogin } from './flows/login.mjs'
+import { runWith as runHomeWith } from './flows/home.mjs'
 
 /* ───────────────────────── 假 miniProgram 句柄 ───────────────────────── */
 
@@ -31,6 +32,7 @@ function makeEl(getSpec, onTap) {
     tap: async () => { onTap && onTap() },
     attribute: async name => getSpec()?.attrs?.[name],
     property: async name => getSpec()?.props?.[name],
+    text: async () => getSpec()?.text ?? '',
     wxml: async () => getSpec()?.wxml || '<view/>',
   }
 }
@@ -52,7 +54,15 @@ function makeMp(cfg) {
       const getSpec = () => cfg.pageFor(cur.split('?')[0]).els?.[sel]
       return getSpec() ? makeEl(getSpec, () => cfg.onTap?.(sel)) : null
     },
-    $$: async () => Array.from({ length: cfg.pageFor(cur.split('?')[0]).views ?? 10 }),
+    // 真 automator 的 $$ 按选择器查全部匹配节点。smoke 只用它数 view，
+    // home 要用它取一组文本（场卡片名 / 分组标题），所以 lists 里登记过的选择器返回带 text 的假元素。
+    $$: async (sel) => {
+      const spec = cfg.pageFor(cur.split('?')[0])
+      const list = spec.lists?.[sel]
+      if (list) return list.map(text => makeEl(() => ({ text }), () => cfg.onTap?.(sel)))
+      if (sel === 'view') return Array.from({ length: spec.views ?? 10 })
+      return []
+    },
   })
   return {
     reLaunch: async (url) => { cur = url; return mkPage() },
@@ -72,7 +82,8 @@ function makeMp(cfg) {
 /* ───────────────────────────── 场景 ───────────────────────────── */
 
 const ALL_PAGES = {
-  'pages/index/index': { views: 12, els: { '.jp-hero__cta': {} } },
+  // GZ-JP-201 起首页标志元素是 .jp-home__events（场次区块，四态都渲染）
+  'pages/index/index': { views: 12, els: { '.jp-home__events': {} } },
   'pages/me/index': { views: 12, els: { '.me-header__top': {} } },
   'pages/me/about': { views: 8 },
   'pages/me/profile': { views: 14 },
@@ -111,7 +122,8 @@ function loginMp({ loggedInAtStart = true, defaultChecked = false, openid = 'moc
         st.loggedIn = false
         for (const k of Object.keys(storage)) delete storage[k]
       }
-      if (sel === '.jp-hero__cta' && !st.loggedIn) st.sheetOpen = true
+      // 首页登录触发点 = 「我的订单」入口（GZ-JP-201 后首页无独立登录按钮，游客优先/按需登录）
+      if (sel === '.jp-entry-card' && !st.loggedIn) st.sheetOpen = true
       if (sel === '.login-agree__box') st.checked = !st.checked
       if (sel === '.login-sheet__cta' && st.checked) {
         st.loggedIn = true
@@ -124,7 +136,7 @@ function loginMp({ loggedInAtStart = true, defaultChecked = false, openid = 'moc
       const key = p.replace(/^\//, '')
       const els = {}
       if (key === 'pages/index/index') {
-        els['.jp-hero__cta'] = {}
+        els['.jp-entry-card'] = { text: '我的订单 查看拼团进度与物流' }
         if (st.sheetOpen) {
           els['.login-sheet'] = {}
           els['.login-agree__box'] = { attrs: { class: `login-agree__box${st.checked ? ' is-on' : ''}` } }
@@ -140,6 +152,58 @@ function loginMp({ loggedInAtStart = true, defaultChecked = false, openid = 'moc
   })
 }
 
+/**
+ * home 用：按「后端会返回什么」造一个渲染结果一致（或故意不一致）的假首页。
+ *
+ * @param {object} cfg
+ * @param {string[]} cfg.cardNames     页面渲染出的场卡片标题
+ * @param {string[]} cfg.groupTitles   页面渲染出的分组标题（按渲染顺序）
+ * @param {boolean}  cfg.banner        banner 是否渲染出内容（false = 空轮播/塌陷）
+ * @param {boolean}  cfg.orderEntry    订单入口是否渲染
+ * @param {boolean}  cfg.eventsWrap    场次区块容器是否渲染
+ */
+function homeMp({
+  cardNames = [],
+  groupTitles = [],
+  banner = 'placeholder',
+  orderEntry = '我的订单 查看拼团进度与物流',
+  eventsWrap = true,
+} = {}) {
+  return makeMp({
+    storage: {},
+    pageFor: (p) => {
+      const key = p.replace(/^\//, '')
+      const els = {}
+      if (key === 'pages/index/index') {
+        els['.jp-home__banner'] = {}
+        if (banner === 'placeholder') els['.hb__ph'] = {}
+        if (banner === 'image') els['.hb__img'] = {}
+        if (eventsWrap) els['.jp-home__events'] = {}
+        if (orderEntry) els['.jp-entry-card'] = { text: orderEntry }
+      }
+      return {
+        path: key,
+        views: 12,
+        els,
+        lists: {
+          '.jp-event-card__name': cardNames,
+          '.jp-home__group-title': groupTitles,
+        },
+      }
+    },
+  })
+}
+
+/** 后端 fixture：1 个已开场的 open 场（进行中）。 */
+const BE_LIVE = [{
+  id: '1',
+  eventNo: 'EVT-20260807-000001',
+  name: '8月上旬快闪场',
+  status: 'open',
+  startTime: '2020-01-01 10:00:00',
+  endTime: '2099-12-31 22:00:00',
+}]
+
 /* ───────────────────────────── 用例 ───────────────────────────── */
 
 const CASES = [
@@ -149,8 +213,8 @@ const CASES = [
     run: () => runSmoke(smokeMp()),
   },
   {
-    name: 'smoke / 首页缺 .jp-hero__cta 标志元素 → 必须 fail',
-    expect: /jp-hero__cta=MISSING/,
+    name: 'smoke / 首页缺 .jp-home__events 标志元素 → 必须 fail',
+    expect: /jp-home__events=MISSING/,
     run: () => runSmoke(smokeMp({ 'pages/index/index': { views: 12, els: {} } })),
   },
   {
@@ -177,6 +241,74 @@ const CASES = [
     name: 'login / 登成了另一个小程序的用户（串号）→ 必须 fail',
     expect: /clientid|mock-jp-tester/,
     run: () => runLogin(loginMp({ openid: 'mock-dev-tester' })),
+  },
+
+  /* ── home（GZ-JP-201）──────────────────────────────────── */
+  {
+    name: 'home / 三区块齐 + 卡片名与后端一致 → 通过',
+    expect: 'pass',
+    run: () => runHomeWith(
+      homeMp({ cardNames: ['8月上旬快闪场'], groupTitles: ['进行中'] }),
+      BE_LIVE,
+    ),
+  },
+  {
+    name: 'home / 三组混排（进行中置顶）→ 通过',
+    expect: 'pass',
+    run: () => runHomeWith(
+      homeMp({
+        cardNames: ['进行中的场', '还没开的场', '已经结束的场'],
+        groupTitles: ['进行中', '即将开始', '已结束'],
+      }),
+      [
+        { id: '1', name: '进行中的场', status: 'open', startTime: '2020-01-01 10:00:00', endTime: '2099-12-31 22:00:00' },
+        { id: '2', name: '还没开的场', status: 'open', startTime: '2099-01-01 10:00:00', endTime: '2099-12-31 22:00:00' },
+        { id: '3', name: '已经结束的场', status: 'closed', startTime: '2020-01-01 10:00:00', endTime: '2020-02-01 22:00:00' },
+      ],
+    ),
+  },
+  {
+    name: 'home / ★页面显示前端 mock 文案（与后端对不上）→ 必须 fail',
+    expect: /没渲染出来|前端 mock/,
+    run: () => runHomeWith(
+      homeMp({ cardNames: ['示例场次（假数据）'], groupTitles: ['进行中'] }),
+      BE_LIVE,
+    ),
+  },
+  {
+    name: 'home / ★banner 塌陷（swiper 里既无图也无默认占位）→ 必须 fail',
+    expect: /banner 塌陷/,
+    run: () => runHomeWith(
+      homeMp({ banner: 'none', cardNames: ['8月上旬快闪场'], groupTitles: ['进行中'] }),
+      BE_LIVE,
+    ),
+  },
+  {
+    name: 'home / ★缺订单入口区块 → 必须 fail',
+    expect: /区块③|jp-entry-card/,
+    run: () => runHomeWith(
+      homeMp({ orderEntry: '', cardNames: ['8月上旬快闪场'], groupTitles: ['进行中'] }),
+      BE_LIVE,
+    ),
+  },
+  {
+    name: 'home / ★分组顺序错（已结束排到了进行中前面）→ 必须 fail',
+    expect: /分组标题不符/,
+    run: () => runHomeWith(
+      homeMp({
+        cardNames: ['进行中的场', '已经结束的场'],
+        groupTitles: ['已结束', '进行中'],
+      }),
+      [
+        { id: '1', name: '进行中的场', status: 'open', startTime: '2020-01-01 10:00:00', endTime: '2099-12-31 22:00:00' },
+        { id: '3', name: '已经结束的场', status: 'closed', startTime: '2020-01-01 10:00:00', endTime: '2020-02-01 22:00:00' },
+      ],
+    ),
+  },
+  {
+    name: 'home / ★后端 0 条场（fixture 没了）→ 必须 fail 而不是假绿',
+    expect: /0 条场/,
+    run: () => runHomeWith(homeMp(), []),
   },
 ]
 

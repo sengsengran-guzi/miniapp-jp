@@ -6,7 +6,7 @@
  * 分派到本小程序的 mock 通道 → 返固定 openid `mock-jp-tester` + sa-token。
  * 所以本 flow 必须跑在 dev profile 产物上（preflight 会体检；`--build development` 可现造）。
  *
- * 走的是**真实用户路径**（首页 CTA → 协议 sheet → 勾选 → 登录），不是后门注 storage —— 这样
+ * 走的是**真实用户路径**（首页「我的订单」入口 → 协议 sheet → 勾选 → 登录），不是后门注 storage —— 这样
  * 顺带把三件事锁进回归：
  *   1. 合规：协议勾选框默认**不勾选**、未勾选时登录按钮 disabled（微信审核驳回过的原因）
  *   2. clientid 路由：登录后持久化的 username 必须是 `wx:mock-jp-tester`（现有小程序是
@@ -42,17 +42,19 @@ export async function run(mp) {
     throw new Error('登出后 me/index 仍有 .logout-btn（= 登录态没清干净，后续断言不可信）')
   }
 
-  // 1. 首页点主 CTA（游客态文案 = 「微信登录」）→ 触发 useAuth.ensureLoggedIn → 弹协议 sheet
+  // 1. 首页点「我的订单」入口 → 触发 useAuth.ensureLoggedIn → 弹协议 sheet
+  //    GZ-JP-201 首页重写后，首页不再有独立的「微信登录」按钮（游客优先 / 按需登录）：
+  //    订单入口是首页上唯一需要登录态的动作，也就成了首页的登录触发点。
   const home = await gotoPage(mp, '/pages/index/index', 1500)
-  const cta = await home.$('.jp-hero__cta').catch(() => null)
-  if (!cta) throw new Error('首页找不到主 CTA .jp-hero__cta（页面没渲染？）')
+  const cta = await home.$('.jp-entry-card').catch(() => null)
+  if (!cta) throw new Error('首页找不到订单入口 .jp-entry-card（页面没渲染？）')
   await cta.tap()
   await sleep(1200)
 
   // 2. 协议 sheet 必须弹出来（游客点敏感动作 → 合规闸门，不是直接登录）
   const sheet = await home.$('.login-sheet').catch(() => null)
   if (!sheet) {
-    throw new Error('点首页 CTA 后没弹出协议同意 sheet .login-sheet（合规闸门失效，或 CTA 误判为已登录态）')
+    throw new Error('点首页订单入口后没弹出协议同意 sheet .login-sheet（合规闸门失效，或误判为已登录态）')
   }
   await screenshot(mp, `${SHOT_DIR}/login_1_sheet.png`)
 

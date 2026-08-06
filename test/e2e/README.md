@@ -37,6 +37,10 @@ node test/e2e/run.mjs smoke
 # 微信登录全链路 + 隐私协议合规闸门（wxMOCK 短路，零真机）
 node test/e2e/run.mjs login
 
+# 首页聚合三区块（banner 不塌陷 / 场三组 / 订单入口；★ 会直连后端比对场名，
+# 证明卡片文案来自真数据而非前端 mock —— 依赖 dev 库里至少有 1 个开过的场）
+node test/e2e/run.mjs home
+
 # 全部（串行）
 node test/e2e/run.mjs all
 
