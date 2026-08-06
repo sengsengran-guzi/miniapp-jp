@@ -14,9 +14,16 @@
  * 加新 flow 时**顺手加一个 happy 场景 + 至少一个 negative 场景**，成本很低、回报是
  * 「断言真的会 fail」这件事有人守着（只写 happy 的断言常年恒真，等于没写）。</p>
  */
-import { run as runSmoke } from './flows/smoke.mjs'
-import { run as runLogin } from './flows/login.mjs'
-import { runWith as runHomeWith } from './flows/home.mjs'
+
+// 假句柄的「渲染」是瞬时的，flow 里为真模拟器准备的 sleep 纯属空等 —— 归零后整轮秒级。
+// ★ 只缩放等待时长，不改任何断言、不跳过任何步骤（见 mp-e2e.mjs 的 SLEEP_SCALE 注释）。
+// 必须在 import flow 之前设置：mp-e2e.mjs 在模块加载时读一次该值。
+process.env.MP_E2E_SLEEP_SCALE = '0'
+
+const { run: runSmoke } = await import('./flows/smoke.mjs')
+const { run: runLogin } = await import('./flows/login.mjs')
+const { runWith: runHomeWith } = await import('./flows/home.mjs')
+const { runWith: runProductWith } = await import('./flows/product.mjs')
 
 /* ───────────────────────── 假 miniProgram 句柄 ───────────────────────── */
 
@@ -66,7 +73,12 @@ function makeMp(cfg) {
   })
   return {
     reLaunch: async (url) => { cur = url; return mkPage() },
-    currentPage: async () => ({ path: cfg.pageFor(cur.split('?')[0]).path }),
+    // ⚠️ 必须返回**完整** page（含 $ / $$），不能只给 { path }：flow 点完一个卡片跳页后
+    //    只能靠 currentPage() 拿新页的句柄再查元素（product flow 的两跳就是这么写的）。
+    //    mkPage() 的 path 是 getter，所以对只读 .path 的老 flow（smoke）完全向后兼容。
+    currentPage: async () => mkPage(),
+    /** 供假件内部改当前路径（模拟 navigateTo 后的落地页）。 */
+    __goto: (p) => { cur = p },
     screenshot: async () => {},
     callWxMethod: async (m, k) => {
       if (m === 'getStorageSync') return cfg.storage[k]
@@ -89,6 +101,9 @@ const ALL_PAGES = {
   'pages/me/profile': { views: 14 },
   'pages/agreement/index': { views: 9 },
   'pages/login/index': { views: 10 },
+  // GZ-JP-202 新增两页
+  'pages/event/index': { views: 16, els: { '.jp-event-detail__grid': {} } },
+  'pages/product/detail': { views: 16, els: { '.jp-product-detail': {} } },
 }
 
 /** smoke 用：按路径查表，路径原样落地（无重定向）。 */
@@ -204,6 +219,89 @@ const BE_LIVE = [{
   endTime: '2099-12-31 22:00:00',
 }]
 
+/**
+ * product 用（GZ-JP-202）：带**跳转状态机**的假 app —— 复刻真实两跳
+ * （首页点场卡 → 场详情；场详情点商品卡 → 商品详情）。
+ *
+ * 每个可配项都对应一条 negative 用例能打到的点：跳错页 / 页面文案是前端 mock /
+ * 已结束条与后端状态不符 / 注意事项正文被截断 / 注意事项排到 CTA 之后 / 加购态与 eventBookable 不符。
+ */
+function productMp({
+  // 跳转落点（负例：跳错页 / 没跳）
+  hop1 = '/pages/event/index',
+  hop2 = '/pages/product/detail',
+  // 场详情
+  headName = '8月上旬快闪场',
+  endedBar = false,
+  gridNames = ['柯南 吧唧 一番赏 A赏'],
+  // 商品详情
+  productName = '柯南 吧唧 一番赏 A赏',
+  price = '128',
+  priceRowText = '¥ 128 包邮',
+  delivery = '8月下旬',
+  noticeBody = '日本线下采购，包装可能有轻微磨损，介意慎拍',
+  // 渲染顺序（notice 必须在 cta 之前）
+  markup = '<view class="jp-product-detail">…<view class="jp-product-notice">…</view>…<view class="jp-product-cta">…</view></view>',
+  ctaClass = 'jp-product-cta__btn',
+} = {}) {
+  const mp = makeMp({
+    storage: {},
+    onTap: (sel) => {
+      if (sel === '.jp-event-card') mp.__goto(hop1)
+      if (sel === '.jp-product-card') mp.__goto(hop2)
+    },
+    pageFor: (p) => {
+      const key = p.replace(/^\//, '')
+      const els = {}
+      const lists = {}
+      if (key === 'pages/index/index') {
+        els['.jp-event-card'] = { text: headName }
+      }
+      if (key === 'pages/event/index') {
+        els['.jp-event-detail__grid'] = {}
+        els['.jp-event-detail__name'] = { text: headName }
+        if (endedBar) els['.jp-event-detail__ended-text'] = { text: '本场已结束，商品仅可浏览，不能加入购物车' }
+        if (gridNames.length) els['.jp-product-card'] = { text: gridNames[0] }
+        lists['.jp-product-card__name'] = gridNames
+      }
+      if (key === 'pages/product/detail') {
+        els['.jp-product-detail'] = { wxml: markup }
+        els['.jp-product-detail__name'] = { text: productName }
+        els['.jp-product-detail__price'] = { text: price }
+        els['.jp-product-detail__price-row'] = { text: priceRowText }
+        els['.jp-product-detail__row-value'] = { text: delivery }
+        if (noticeBody !== null) els['.jp-product-notice__body'] = { text: noticeBody }
+        els['.jp-product-cta__btn'] = { attrs: { class: ctaClass } }
+      }
+      return { path: key, views: 16, els, lists }
+    },
+  })
+  return mp
+}
+
+/** product flow 的后端 fixture：1 个进行中的场 + 1 件在架商品（可加购）。 */
+const BE_PRODUCT = {
+  event: BE_LIVE[0],
+  products: [{ id: '1', name: '柯南 吧唧 一番赏 A赏' }],
+  detail: {
+    id: '1',
+    name: '柯南 吧唧 一番赏 A赏',
+    priceCent: 12800,
+    deliveryDateText: '8月下旬',
+    noticeText: '日本线下采购，包装可能有轻微磨损，介意慎拍',
+    eventBookable: true,
+  },
+}
+
+/** 深拷贝改一处（避免用例之间互相污染 fixture）。 */
+function beProduct(patch = {}) {
+  return {
+    event: { ...BE_PRODUCT.event, ...(patch.event || {}) },
+    products: patch.products || BE_PRODUCT.products.map(p => ({ ...p })),
+    detail: patch.detail === null ? null : { ...BE_PRODUCT.detail, ...(patch.detail || {}) },
+  }
+}
+
 /* ───────────────────────────── 用例 ───────────────────────────── */
 
 const CASES = [
@@ -309,6 +407,102 @@ const CASES = [
     name: 'home / ★后端 0 条场（fixture 没了）→ 必须 fail 而不是假绿',
     expect: /0 条场/,
     run: () => runHomeWith(homeMp(), []),
+  },
+
+  /* ── product（GZ-JP-202）─────────────────────────────── */
+  {
+    name: 'product / 两跳可达 + 场·商品文案与后端一致 + 包邮 + notice 在 CTA 之上 → 通过',
+    expect: 'pass',
+    run: () => runProductWith(productMp(), beProduct()),
+  },
+  {
+    name: 'product / 已结束场（closed + eventBookable=false，CTA 置灰 + 提示条）→ 通过',
+    expect: 'pass',
+    run: () => runProductWith(
+      productMp({ endedBar: true, ctaClass: 'jp-product-cta__btn is-disabled' }),
+      beProduct({ event: { status: 'closed' }, detail: { eventBookable: false } }),
+    ),
+  },
+  {
+    name: 'product / ★第 1 跳跳错页（首页场卡路由与场详情文件名对不上）→ 必须 fail',
+    expect: /第 1 跳失败/,
+    run: () => runProductWith(productMp({ hop1: '/pages/index/index' }), beProduct()),
+  },
+  {
+    name: 'product / ★第 2 跳跳错页（商品卡路由不对）→ 必须 fail',
+    expect: /第 2 跳失败/,
+    run: () => runProductWith(productMp({ hop2: '/pages/event/index' }), beProduct()),
+  },
+  {
+    name: 'product / ★场详情显示前端 mock 场名（与后端对不上）→ 必须 fail',
+    expect: /场详情页头场名对不上/,
+    run: () => runProductWith(productMp({ headName: '示例场次（假数据）' }), beProduct()),
+  },
+  {
+    name: 'product / ★商品网格显示前端 mock 商品名 → 必须 fail',
+    expect: /没渲染出来|商品卡数对不上/,
+    run: () => runProductWith(productMp({ gridNames: ['示例商品（假数据）'] }), beProduct()),
+  },
+  {
+    name: 'product / ★后端 closed 但页面没渲染「已结束」提示条 → 必须 fail',
+    expect: /没渲染「本场已结束」提示条/,
+    run: () => runProductWith(
+      productMp({ endedBar: false, ctaClass: 'jp-product-cta__btn is-disabled' }),
+      beProduct({ event: { status: 'closed' }, detail: { eventBookable: false } }),
+    ),
+  },
+  {
+    name: 'product / ★场没结束却显示「已结束」提示条（吓跑客人）→ 必须 fail',
+    expect: /未结束）却渲染了/,
+    run: () => runProductWith(productMp({ endedBar: true }), beProduct()),
+  },
+  {
+    name: 'product / ★价格与后端 priceCent 对不上（分→元换算错）→ 必须 fail',
+    expect: /商品价格对不上/,
+    run: () => runProductWith(productMp({ price: '12800' }), beProduct()),
+  },
+  {
+    name: 'product / ★价格旁没有「包邮」标识（AC）→ 必须 fail',
+    expect: /没有「包邮」标识/,
+    run: () => runProductWith(productMp({ priceRowText: '¥ 128' }), beProduct()),
+  },
+  {
+    name: 'product / ★注意事项区块整个不见了 → 必须 fail',
+    expect: /没有注意事项区块/,
+    run: () => runProductWith(productMp({ noticeBody: null }), beProduct()),
+  },
+  {
+    name: 'product / ★注意事项正文被截断（"…介意慎拍" 只显示前半段）→ 必须 fail',
+    expect: /注意事项正文与后端不一致/,
+    run: () => runProductWith(productMp({ noticeBody: '日本线下采购，包装可能有轻微…' }), beProduct()),
+  },
+  {
+    name: 'product / ★注意事项被排到 CTA 之后（违反甲方硬要求）→ 必须 fail',
+    expect: /排在了 CTA 之后/,
+    run: () => runProductWith(
+      productMp({
+        markup: '<view class="jp-product-detail">…<view class="jp-product-cta">…</view>…<view class="jp-product-notice">…</view></view>',
+      }),
+      beProduct(),
+    ),
+  },
+  {
+    name: 'product / ★★ 场已结束（eventBookable=false）但加购按钮仍可点 → 必须 fail',
+    expect: /置灰状态与后端 eventBookable 不符/,
+    run: () => runProductWith(
+      productMp({ endedBar: true, ctaClass: 'jp-product-cta__btn' }),
+      beProduct({ event: { status: 'closed' }, detail: { eventBookable: false } }),
+    ),
+  },
+  {
+    name: 'product / ★场进行中却把加购按钮置灰（白白拦掉成交）→ 必须 fail',
+    expect: /置灰状态与后端 eventBookable 不符/,
+    run: () => runProductWith(productMp({ ctaClass: 'jp-product-cta__btn is-disabled' }), beProduct()),
+  },
+  {
+    name: 'product / ★后端该场 0 件在架商品（fixture 没了）→ 必须 fail 而不是假绿',
+    expect: /0 件在架商品/,
+    run: () => runProductWith(productMp(), beProduct({ products: [], detail: null })),
   },
 ]
 

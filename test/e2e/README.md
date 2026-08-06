@@ -41,6 +41,11 @@ node test/e2e/run.mjs login
 # 证明卡片文案来自真数据而非前端 mock —— 依赖 dev 库里至少有 1 个开过的场）
 node test/e2e/run.mjs home
 
+# 场详情 + 商品详情（GZ-JP-202）。★ 真点两跳：首页场卡 → 场详情 → 商品卡 → 商品详情，
+# 并把「加购置灰状态」与后端 eventBookable 绑死断言；同样直连后端比对场名/商品名/价格/注意事项。
+# 依赖 dev 库里至少有 1 个开过的场，且该场至少 1 件 on_shelf 商品
+node test/e2e/run.mjs product
+
 # 全部（串行）
 node test/e2e/run.mjs all
 
@@ -126,5 +131,11 @@ node test/e2e/self-test.mjs     # 0 = 全过
 - **flow 代码写错**（选择器打错 / 断言写反 / 漏 await）→ self-test 就红 → 改代码；
 - **本机环境不行**（IDE 没登录 / 端口关 / 卡死）→ self-test 绿、`run.mjs` 红 → 修环境，代码是好的。
 
-写 negative 场景不是可选项：只写 happy 的断言常年恒真，等于没写。现有 7 个用例里 4 个是 negative
-（缺标志元素 / 渲染空壳 / 协议框默认勾选 / 登成另一个小程序的用户）。
+写 negative 场景不是可选项：只写 happy 的断言常年恒真，等于没写。现有 30 个用例里 **16 个是 negative**
+（缺标志元素 / 渲染空壳 / 协议框默认勾选 / 登成另一个小程序的用户 / banner 塌陷 / 分组顺序错 /
+跳错页 / 页面显示前端 mock 文案 / 已结束提示条与后端状态不符 / 价格换算错 / 缺包邮标识 /
+注意事项被截断 / 注意事项排到 CTA 之后 / **加购置灰态与 eventBookable 不符**（两个方向各一条）/ fixture 空了）。
+
+> **等待时长**：self-test 里假句柄的「渲染」是瞬时的，flow 中为真模拟器准备的 `sleep(2500)` 纯属空等，
+> flow 一多就把 self-test 拖到几分钟、于是没人愿意跑。所以 self-test 开头设 `MP_E2E_SLEEP_SCALE=0`，
+> 整轮变成秒级。**该变量只缩放「等多久」，不改任何断言、不跳过任何步骤**，`run.mjs` 真跑时不设置（恒为原速）。

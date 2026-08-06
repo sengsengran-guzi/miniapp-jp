@@ -1,0 +1,75 @@
+/**
+ * 商品详情页文案（zh-CN）—— GZ-JP-202 / UI:mp.product_detail。
+ *
+ * <p>简化 t() 签名（与 home.zh-CN.ts / event.zh-CN.ts 同款），key 形如 `product.xxx`。</p>
+ */
+
+const productZhCN = {
+  /** 导航栏标题 */
+  pageTitle: '商品详情',
+
+  /* ── 价格 ────────────────────────────────── */
+  /** 货币符号（与数字分两个节点渲染，便于「小 ¥ + 大数字」排版） */
+  currency: '¥',
+  /** 无价时兜底 */
+  priceTbd: '价格待定',
+  /** ★ 包邮标识（REQ-ORDER-004：拼团全包邮，此价即最终支付价） */
+  shippingFree: '包邮',
+  /** 包邮补充说明 */
+  shippingFreeHint: '国际邮费与国内运费已包含在价格内',
+
+  /* ── 到货 ────────────────────────────────── */
+  /** 预计到货标签 */
+  deliveryLabel: '预计到货',
+  /** 商家没填到货时间时的兜底 */
+  deliveryUnset: '待定（以店内通知为准）',
+
+  /* ── ★ 注意事项区块（REQ-PROD-005 / UI:mp.product_detail.notice）── */
+  /** 区块标题 */
+  noticeTitle: '购买须知',
+  /** 商家没填时的兜底正文（区块本身照常出现，不因为没填就消失） */
+  noticeFallback: '日本现场采购，到货时间可能有浮动；下单前请确认款式与数量，介意者慎拍。',
+
+  /* ── 所属场 ──────────────────────────────── */
+  /** 所属场标签（页头面包屑） */
+  eventLabel: '所属场次',
+
+  /* ── 底部 CTA ────────────────────────────── */
+  /** 数量标签 */
+  quantityLabel: '数量',
+  /** 主 CTA */
+  addToCart: '加入购物车',
+  /** ★ 场已结束时 CTA 置灰后的文案（AC：场已结束时加购置灰） */
+  addToCartEnded: '本场已结束',
+  /** 场已结束时点击置灰 CTA 的 toast */
+  endedToast: '本场已结束，无法加入购物车',
+  /**
+   * ★ 加购功能本身归 GZ-JP-104/203（购物车域）。本卡只做占位交互：
+   * 明确告诉用户「还没上线」，绝不假装已经加进购物车了。
+   */
+  addToCartComingSoon: '购物车即将上线，敬请期待',
+
+  /* ── 取数态 ──────────────────────────────── */
+  loading: '正在加载商品…',
+  /** 商品不存在 / 已下架 / 所属场未开场 → 后端 fail */
+  loadError: '该商品已下架',
+  loadErrorSub: '回上一页看看其它商品',
+  back: '返回',
+  backHome: '返回首页',
+} as const
+
+export type ProductMessageKey = keyof typeof productZhCN
+
+/**
+ * 简化版 t()：从字符串常量表里取值。
+ *
+ * @param key 文案 key，形如 `product.pageTitle`
+ * @returns 中文文案，找不到时返回 key 本身（便于调试）
+ */
+export function t(key: string): string {
+  if (key.startsWith('product.')) {
+    const subKey = key.slice('product.'.length) as ProductMessageKey
+    return productZhCN[subKey] ?? key
+  }
+  return key
+}

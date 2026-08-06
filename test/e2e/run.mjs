@@ -22,6 +22,7 @@ const FLOWS = {
   smoke: () => import('./flows/smoke.mjs'),
   login: () => import('./flows/login.mjs'),
   home: () => import('./flows/home.mjs'),
+  product: () => import('./flows/product.mjs'),
 }
 
 /**

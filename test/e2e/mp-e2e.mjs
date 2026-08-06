@@ -107,8 +107,26 @@ export async function safeDisconnect(mp) {
   try { const r = mp && mp.disconnect && mp.disconnect(); if (r && typeof r.then === 'function') await r } catch {}
 }
 
+/**
+ * 等待时长缩放系数（默认 1 = 原速）。
+ *
+ * <p>唯一用途：`self-test.mjs` 用<b>假 miniProgram 句柄</b>跑 flow 时渲染是瞬时的，
+ * 那些为真模拟器准备的 `sleep(2500)` 纯属空等 —— flow 一多就把 self-test 拖到几分钟，
+ * 于是没人愿意跑它，等于白写。self-test 把本值设为 0 后整轮是秒级。</p>
+ *
+ * <p><b>★ 只缩放「等多久」，不改任何断言、不跳过任何步骤</b> —— 不是让断言变松的后门。
+ * 真跑 `run.mjs` 时本变量不设置，恒为原速（preflight / flow 都不读它）。</p>
+ */
+const SLEEP_SCALE = process.env.MP_E2E_SLEEP_SCALE === undefined
+  ? 1
+  : Number(process.env.MP_E2E_SLEEP_SCALE) || 0
+
 export function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms))
+  const wait = Math.round(ms * SLEEP_SCALE)
+  if (wait <= 0) {
+    return Promise.resolve()
+  }
+  return new Promise(r => setTimeout(r, wait))
 }
 
 /* ────────────────────────────── 登录态治具 ────────────────────────────── */

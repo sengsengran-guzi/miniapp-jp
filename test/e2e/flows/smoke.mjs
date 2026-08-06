@@ -30,6 +30,13 @@ const PAGES = [
   { path: '/pages/agreement/index?type=privacy', accept: ['pages/agreement/index'] },
   // 整页登录（兜底路径）：已登录态下 onLoad 会 switchTab 回首页 —— 也是合法结果，一并锁进回归。
   { path: '/pages/login/index', accept: ['pages/login/index', 'pages/index/index'] },
+  // GZ-JP-202 场详情：标志元素取商品网格容器 .jp-event-detail__grid ——
+  // loading/error/empty/有数据四态都渲染这个节点，比任何一态内的元素都稳（同首页 .jp-home__events 的取法）。
+  // 深度断言（页头场名 / 网格文案 / 两跳可达 / 加购态）在独立的 product flow 里，smoke 只管「可达 + 没渲染成空壳」。
+  { path: '/pages/event/index?id=1', accept: ['pages/event/index'], must: '.jp-event-detail__grid' },
+  // GZ-JP-202 商品详情：标志元素取页面根容器（loading/error/正文三态都在它里面）。
+  // 不用 .jp-product-notice —— 那个只在正文态渲染，取数失败时会把「页面可达」误判成 fail。
+  { path: '/pages/product/detail?id=1', accept: ['pages/product/detail'], must: '.jp-product-detail' },
 ]
 const MIN_VIEWS = 3
 

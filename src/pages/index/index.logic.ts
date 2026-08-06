@@ -12,70 +12,20 @@
  */
 import type { HomeBannerItem } from '@/api/gz-common'
 import type { GzJpEventMpVO } from '@/api/gz-jp/event'
-import { BACKEND_PLACEHOLDER_COVER } from '@/api/gz-jp/event'
+import { formatClock, hasRealCover, parseBackendTime } from '@/api/gz-jp/format'
 
 /* ============================================================
- * 1. 时间解析（后端发 'yyyy-MM-dd HH:mm:ss'，不是 ISO）
+ * 1. 时间解析 / 封面兜底 —— 已上提到 @/api/gz-jp/format（GZ-JP-202）
  * ============================================================ */
 
 /**
- * 匹配 {@code yyyy-MM-dd HH:mm[:ss]}，日期与时间之间允许空格或 'T'（两种都收，前后端谁改格式都不炸）。
- * 秒可选；毫秒 / 时区后缀直接忽略（后端 @JsonFormat 不带，真带了也不影响到分钟级判定）。
- */
-const BACKEND_TIME_RE = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/
-
-/**
- * 解析后端时间串 → 本地毫秒时间戳。无效返回 {@code NaN}。
+ * 三个后端契约适配函数（时间串解析 / 时钟格式化 / 封面兜底）在 GZ-JP-202 起
+ * 由场详情 + 商品详情共用，实现上提到 {@code @/api/gz-jp/format}。
  *
- * <p>⚠️ <b>不能用 new Date(str) / Date.parse(str)</b>：iOS（真机 + 部分基础库）对
- * {@code '2026-08-07 10:00:00'} 这种空格分隔格式返回 Invalid Date，模拟器上却是好的 ——
- * 典型的「模拟器全绿、真机全崩」。这里按字段手工构造 {@code new Date(y, m-1, d, ...)}
- * （<b>本地时区</b>语义），与 {@link formatClock} 的读取方式对称，所以「解析后再格式化」
- * 恒等于原始墙钟时间，与运行环境时区无关。</p>
- *
- * @param value 后端时间串，如 '2026-08-07 10:00:00'
- * @returns 毫秒时间戳；null / 空串 / 格式不符 / 字段越界 → NaN
+ * <p>这里<b>原样 re-export</b> 而不是让调用方改 import：首页页面与 201 的既有单测都从
+ * {@code ./index.logic} 取这三个，路径保持稳定，改动面收敛在一行 import 上。</p>
  */
-export function parseBackendTime(value: string | null | undefined): number {
-  if (!value) {
-    return Number.NaN
-  }
-  const m = BACKEND_TIME_RE.exec(String(value).trim())
-  if (!m) {
-    return Number.NaN
-  }
-  const year = Number(m[1])
-  const month = Number(m[2])
-  const day = Number(m[3])
-  const hour = Number(m[4])
-  const minute = Number(m[5])
-  const second = m[6] === undefined ? 0 : Number(m[6])
-  // 手工范围校验：new Date(2026, 12, 40) 会静默滚到下一年，不校验就会把脏数据算成一个合法时间
-  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) {
-    return Number.NaN
-  }
-  const d = new Date(year, month - 1, day, hour, minute, second, 0)
-  // 反查月份：2 月 31 日这类「格式合法但日期不存在」的串会被 Date 滚到 3 月，这里拒掉
-  if (d.getMonth() !== month - 1 || d.getDate() !== day) {
-    return Number.NaN
-  }
-  return d.getTime()
-}
-
-/**
- * 毫秒时间戳 → {@code 'MM/DD HH:mm'}（本地时区，与 {@link parseBackendTime} 对称）。
- *
- * @param ms 毫秒时间戳
- * @returns 格式化串；NaN / 非有限值 → 空串
- */
-export function formatClock(ms: number): string {
-  if (!Number.isFinite(ms)) {
-    return ''
-  }
-  const d = new Date(ms)
-  const p2 = (n: number) => String(n).padStart(2, '0')
-  return `${p2(d.getMonth() + 1)}/${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`
-}
+export { formatClock, hasRealCover, parseBackendTime }
 
 /* ============================================================
  * 2. 场分组（进行中 / 即将开始 / 已结束）
@@ -154,24 +104,8 @@ export function groupEvents(
 }
 
 /* ============================================================
- * 3. 封面 / 时间文案
+ * 3. 时间文案
  * ============================================================ */
-
-/**
- * 这个封面 URL 是不是「真有图」。
- *
- * <p>后端无图时回落 {@link BACKEND_PLACEHOLDER_COVER}，但该静态文件在 miniapp-jp 里<b>不存在</b>，
- * 直接渲染会 404 出空白框。判 false 时由卡片渲染内置占位块（有品牌感，比破图强）。</p>
- *
- * @param url 后端给的 coverImageUrl
- */
-export function hasRealCover(url: string | null | undefined): boolean {
-  const v = (url ?? '').trim()
-  if (!v) {
-    return false
-  }
-  return v !== BACKEND_PLACEHOLDER_COVER
-}
 
 /** 卡片时间行的语义类型（文案由页面套 locale 组装，本层不出中文）。 */
 export type EventTimingKind = 'deadline' | 'start' | 'endedAt' | 'none'
