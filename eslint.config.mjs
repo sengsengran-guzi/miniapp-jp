@@ -23,6 +23,11 @@ export default uniHelper({
     'packages/**',
     // 微信小程序自定义 tabbar 原生入口（Component() 全局，非 ESM 环境）
     'src/customize-tab-bar/**',
+    // 模拟器 E2E harness：独立 node 包（自带 package.json + node_modules，node 运行时，非 app 源码，
+    // 也不在 tsconfig 里）。风格刻意与兄弟工程 code/main/miniapp/test/e2e/ 保持逐行一致 —— 两套
+    // harness 会长期共同演进、互相 cherry-pick，被 antfu 风格规则重排会让 diff 永久噪声化。
+    // 它自己的逻辑体检走 `node test/e2e/self-test.mjs`（见该目录 README）。
+    'test/e2e/**',
   ],
   // https://eslint-config.antfu.me/rules
   rules: {

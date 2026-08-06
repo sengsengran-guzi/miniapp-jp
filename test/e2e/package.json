@@ -1,0 +1,15 @@
+{
+  "name": "gz-jp-mp-e2e",
+  "private": true,
+  "type": "module",
+  "description": "谷子宇宙拼团小程序模拟器 E2E 驱动（kevin-qa Tier 1B）。独立 node_modules，与小程序 app 依赖树隔离——不进 miniapp-jp/package.json，不触发 CLAUDE.md §6 铁律 8。",
+  "scripts": {
+    "smoke": "node run.mjs smoke",
+    "login": "node run.mjs login",
+    "all": "node run.mjs all",
+    "build-dist": "node build-dist.mjs development"
+  },
+  "devDependencies": {
+    "miniprogram-automator": "^0.12.1"
+  }
+}
