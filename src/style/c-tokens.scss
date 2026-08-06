@@ -1,0 +1,444 @@
+/**
+ * c-tokens.scss — 谷子宇宙 · 功能优先清爽 设计系统（小程序唯一皮肤）
+ *
+ * 权威来源：design/design_handoff_clean/README.md + clean-shared.jsx（甲方 2026-06 改版拍板）
+ * 风格：暖中性底 + 白卡 + 柔和扩散阴影 + 圆角 + 单一克制品牌绿（#33b36b）。
+ *   （上一版「C 日漫海报浓墨」的粗黑描边 / 硬投影 / 直角 / ①红圈 / 网点 已退场。）
+ *
+ * 用法：
+ *   1. CSS 变量 var(--c-xxx) —— 组件 <style scoped> 内引用，主题统一收口在这里
+ *   2. 全局类 .c-panel / .c-btn / .c-tag / .c-manga-title …… —— 直接挂 class，
+ *      或用对应 Biz 组件（BizPanel / BizButton / BizTag / BizMangaTitle …）包一层
+ *
+ * 单位换算：设计稿 375pt 基准，px → rpx 取 ×2。
+ * 改皮肤只改本文件的 token 值 + 下方几条公共组件规则，全站页面自动变样。
+ *
+ * ⚠ 改色规则：色值唯一真源是本文件 + uno.config.ts theme.colors.c（两处必须一致）。
+ *   组件里禁止再硬编码 hex（CLAUDE.md 铁律 #7 / §7.5 组件库无关纪律延伸）。
+ */
+
+:root,
+page {
+  /* ── 1. 色彩 ───────────────────────────────────────── */
+  --c-bg: #f4f2ed; /* 页面底：暖浅灰 */
+  --c-surface: #ffffff; /* 卡片 / 栏面：白 */
+  --c-paper: #ffffff; /* 卡片底别名（向后兼容历史 var(--c-paper) 用例） */
+  --c-ink: #211d17; /* 主文字（暖近黑，不再用于描边） */
+  --c-ink-2: #857d70; /* 次要文字 / 说明 */
+  --c-ink-3: #b4ada1; /* 占位 / 弱 / 禁用 */
+  --c-red: #33b36b; /* 品牌主色＝清新绿，克制使用：主 CTA / 价格 / 选中 / 头条标（令牌名沿用 --c-red） */
+  --c-red-deep: #2aa05e; /* 按下态（深一档绿） */
+  --c-red-soft: #e5f6ec; /* 品牌绿浅底（标签 / 选中底） */
+  --c-danger: #e0452f; /* 报错 / 危险 / 校验警告专用红（品牌主色是绿，报错单独用红） */
+  --c-danger-soft: #fce9e4; /* 报错浅底 */
+  --c-green: #3fa85c; /* 成功 / 营业中 / 库存 */
+  --c-green-soft: #e6f4ea;
+  --c-amber: #e5a83c; /* 提醒 / 须知 */
+  --c-amber-soft: #fbf0dc;
+  --c-yellow: #e5a83c; /* 旧 --c-yellow 别名 → 收敛到 amber */
+  --c-blue: #3c7bd4; /* 资讯 / 链接 / 物流 */
+  --c-blue-soft: #e7effa;
+  --c-line: rgba(33, 29, 23, 0.07); /* 发丝分隔线（唯一描边用途） */
+
+  /* 占位彩纸底（商品/角色占位的柔和色块，对齐原型 ProductImg 配色） */
+  --c-tint-pink: #fbe9f1;
+  --c-tint-red: #fce9e4;
+  --c-tint-blue: #e7effa;
+  --c-tint-yellow: #fbf0dc;
+  --c-tint-green: #e6f4ea;
+
+  /* 稀有度（扭蛋用） */
+  --c-r-ssr: #e5a83c;
+  --c-r-sr: #a663f4;
+  --c-r-r: #3c7bd4;
+  --c-r-n: #b4ada1;
+
+  /* ── 2. 描边 / 阴影（清爽：基本取消描边，硬投影 → 柔和扩散） ── */
+  --c-bw: 0; /* 粗描边退场（全站 var(--c-bw) 用例自动归零） */
+  --c-bw-2: 0; /* 中描边退场 */
+  --c-bw-3: 2rpx; /* 仅发丝分隔线（配 --c-line） */
+  --c-shadow: 0 2rpx 6rpx rgba(33, 29, 23, 0.05), 0 12rpx 40rpx rgba(33, 29, 23, 0.05); /* 卡片柔和阴影 */
+  --c-shadow-btn: 0 12rpx 32rpx rgba(51, 179, 107, 0.25); /* 主按钮品牌绿光阴影 */
+  --c-shadow-sm: 0 2rpx 4rpx rgba(33, 29, 23, 0.05); /* 小元素柔和阴影 */
+  --c-shadow-sel: 0 0 0 3rpx var(--c-red); /* 选中态：红色描边环（取代硬投影） */
+  --c-shadow-cta: none; /* 底部 CTA 上沿改用发丝边，阴影留空 */
+
+  /* ── 3. 字号（rpx，沿用） ───────────────────────────── */
+  --c-fs-hero: 84rpx;
+  --c-fs-display: 56rpx;
+  --c-fs-h1: 40rpx;
+  --c-fs-h2: 32rpx;
+  --c-fs-lg: 30rpx;
+  --c-fs-body: 26rpx;
+  --c-fs-sm: 22rpx;
+  --c-fs-xs: 20rpx;
+  --c-fs-2xs: 18rpx;
+  --c-fs-3xs: 16rpx;
+
+  /* ── 4. 间距 / 圆角 ─────────────────────────────────── */
+  --c-gap-page: 28rpx; /* 页面左右内边距 */
+  --c-gap-section: 32rpx; /* 区块之间竖向节奏 */
+  --c-gap-card: 24rpx; /* 卡内边距 / 区块内组间距 */
+  --c-gap: 16rpx; /* 常规间隔 */
+  --c-radius: 24rpx; /* 控件 / 标签圆角（12px） */
+  --c-radius-card: 32rpx; /* 卡片圆角（16px） */
+  --c-radius-pill: 999rpx; /* chip / 胶囊按钮 */
+  --c-radius-bubble: var(--c-radius-card); /* 旧气泡圆角别名 → 普通卡圆角 */
+  --c-cta-spacer: 140rpx; /* 底部 fixed CTA 让位高度 */
+
+  /* 分隔线 / 虚线（统一发丝线，收口各页裸 2rpx） */
+  --c-divider: var(--c-bw-3) solid var(--c-line);
+  --c-dash: var(--c-bw-3) dashed var(--c-line);
+
+  /* 弹层遮罩（墨色半透） */
+  --c-mask: rgba(33, 29, 23, 0.4);
+
+  /* 深底反白文字三档（深色卡 / 报头上的白字层级） */
+  --c-on-dark: #ffffff;
+  --c-on-dark-2: rgba(255, 255, 255, 0.72);
+  --c-on-dark-3: rgba(255, 255, 255, 0.5);
+
+  /* ── 5. 字体 ───────────────────────────────────────── */
+  --c-font: 'PingFang SC', 'Hiragino Sans GB', 'Heiti SC', system-ui, sans-serif;
+  --c-font-mono: 'SF Mono', 'Roboto Mono', Menlo, monospace;
+
+  /* ── 6. 状态栏 / 安全区 ─────────────────────────────── */
+  --c-status-bar: 88rpx;
+
+  /* wot-design-uni 主题色对齐品牌红 */
+  --wot-color-theme: var(--c-red);
+}
+
+/* 默认整页底色（清爽版无纸纹底） */
+page {
+  background-color: var(--c-bg);
+}
+
+/* ════════════════════════════════════════════════════════
+ * 全局组件类（Biz 组件内部 / 页面直接挂 class 都用这一套）
+ * ════════════════════════════════════════════════════════ */
+
+/* 屏幕根容器：暖中性底（无横线纸纹） */
+.c-screen {
+  min-height: 100vh;
+  box-sizing: border-box;
+  color: var(--c-ink);
+  font-family: var(--c-font);
+  background-color: var(--c-bg);
+}
+
+/* 卡片：白底 + 柔和阴影 + 圆角（核心容器） */
+.c-panel {
+  position: relative;
+  box-sizing: border-box;
+  background: var(--c-surface);
+  border-radius: var(--c-radius-card);
+  box-shadow: var(--c-shadow);
+}
+.c-panel--dashed {
+  /* 占位虚线卡（如拍照加号位）：发丝虚线，无阴影 */
+  box-shadow: none;
+  border: var(--c-bw-3) dashed var(--c-line);
+}
+.c-panel--sm {
+  border-radius: var(--c-radius);
+  box-shadow: var(--c-shadow-sm);
+}
+.c-panel--ink {
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+}
+.c-panel--flat {
+  box-shadow: none;
+}
+/* 清爽版取消漫画右上角红点角标 */
+.c-panel--accent::after {
+  content: none;
+}
+
+/* 主行动按钮（圆角 + 红光阴影 + 600 字重） */
+.c-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+  box-sizing: border-box;
+  padding: 22rpx 40rpx;
+  font-size: var(--c-fs-body);
+  font-weight: 600;
+  letter-spacing: 0.5rpx;
+  color: var(--c-on-dark);
+  background: var(--c-red);
+  border-radius: var(--c-radius);
+  box-shadow: var(--c-shadow-btn);
+  transition:
+    transform 0.12s ease,
+    opacity 0.12s ease;
+}
+.c-btn--block {
+  display: flex;
+  width: 100%;
+}
+.c-btn--lg {
+  padding: 28rpx 44rpx;
+  font-size: var(--c-fs-lg);
+}
+.c-btn--sm {
+  padding: 12rpx 28rpx;
+  font-size: var(--c-fs-sm);
+  box-shadow: none;
+}
+.c-btn--green {
+  background: var(--c-green);
+  box-shadow: none;
+}
+.c-btn--ink {
+  background: var(--c-ink);
+  box-shadow: none;
+}
+/* 次要按钮：描边幽灵态 */
+.c-btn--ghost {
+  background: transparent;
+  color: var(--c-ink);
+  border: var(--c-bw-3) solid var(--c-line);
+  box-shadow: none;
+}
+/* 柔和按钮：红柔底红字 */
+.c-btn--soft {
+  background: var(--c-red-soft);
+  color: var(--c-red);
+  box-shadow: none;
+}
+.c-btn:active {
+  transform: translateY(1rpx);
+  opacity: 0.92;
+}
+.c-btn--disabled {
+  background: #d9d4cb;
+  color: var(--c-on-dark);
+  box-shadow: none;
+}
+
+/* 标签：柔和底 + 同色系文字（去描边、小圆角） */
+.c-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6rpx;
+  padding: 4rpx 14rpx;
+  font-size: var(--c-fs-2xs);
+  font-weight: 600;
+  letter-spacing: 0.4rpx;
+  line-height: 1.5;
+  border-radius: 8rpx;
+  color: var(--c-ink-2);
+  background: rgba(33, 29, 23, 0.05);
+}
+.c-tag--red {
+  background: var(--c-red-soft);
+  color: var(--c-red);
+}
+.c-tag--green {
+  background: var(--c-green-soft);
+  color: var(--c-green);
+}
+.c-tag--amber {
+  background: var(--c-amber-soft);
+  color: #b5791a;
+}
+.c-tag--blue {
+  background: var(--c-blue-soft);
+  color: var(--c-blue);
+}
+.c-tag--ink {
+  background: rgba(33, 29, 23, 0.05);
+  color: var(--c-ink);
+}
+.c-tag--outline {
+  background: transparent;
+  border: var(--c-bw-3) solid var(--c-line);
+  color: var(--c-ink-2);
+}
+
+/* 标题（清爽：700 普通粗体，无白描边） */
+.c-manga-title {
+  display: inline-block;
+  font-family: var(--c-font);
+  font-weight: 700;
+  letter-spacing: -0.4rpx;
+  line-height: 1.2;
+  color: var(--c-ink);
+}
+/* 清爽版取消漫画白描边 */
+.c-manga-title--stroke {
+  text-shadow: none;
+}
+
+/* 区块标题：朴素粗体 + 右侧「更多」链接 */
+.c-section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 12rpx;
+  padding: 0 var(--c-gap-page) 20rpx;
+}
+.c-section-title__tag {
+  font-size: var(--c-fs-lg);
+  font-weight: 600;
+  letter-spacing: -0.4rpx;
+  color: var(--c-ink);
+}
+.c-section-title__sub {
+  font-size: var(--c-fs-xs);
+  color: var(--c-ink-3);
+}
+.c-section-title__more {
+  margin-left: auto;
+  font-size: var(--c-fs-xs);
+  font-weight: 500;
+  color: var(--c-ink-2);
+}
+
+/* 步骤标题：实心墨色圆点 + 白数字（取代 ① 红圈） */
+.c-step-title {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 0 var(--c-gap-page) 16rpx;
+}
+.c-step-title__n {
+  width: 44rpx;
+  height: 44rpx;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  font-size: var(--c-fs-sm);
+  font-weight: 700;
+  line-height: 1;
+}
+.c-step-title__date {
+  margin-left: auto;
+  font-size: var(--c-fs-xs);
+  color: var(--c-ink-3);
+}
+
+/* 提示便签（清爽：圆角白底柔和阴影，无漫画气泡尾巴） */
+.c-speech {
+  display: inline-block;
+  position: relative;
+  padding: 12rpx 24rpx;
+  font-size: var(--c-fs-sm);
+  font-weight: 500;
+  color: var(--c-ink);
+  background: var(--c-surface);
+  border-radius: var(--c-radius);
+  box-shadow: var(--c-shadow-sm);
+}
+
+/* 漫画装饰退场：网点 / 集中线一律不渲染（防御历史用例） */
+.c-screentone,
+.c-screentone--fine,
+.c-screentone--wide,
+.c-screentone--light,
+.c-burst {
+  display: none;
+}
+
+/* 顶部导航条（清爽：半透白 + 毛玻璃 + 发丝底边） */
+.c-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding-top: var(--c-status-bar);
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: saturate(180%) blur(16px);
+  border-bottom: var(--c-bw-3) solid var(--c-line);
+}
+
+/* 底部 fixed CTA 条（清爽：半透白 + 毛玻璃 + 发丝顶边） */
+.c-cta-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  padding: 24rpx var(--c-gap-page);
+  padding-bottom: calc(24rpx + env(safe-area-inset-bottom));
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: saturate(180%) blur(16px);
+  border-top: var(--c-bw-3) solid var(--c-line);
+}
+
+/* monospace 编码小字（核销码 / 日期 / 单号） */
+.c-mono {
+  font-family: var(--c-font-mono);
+  font-size: var(--c-fs-2xs);
+  color: var(--c-ink-2);
+  letter-spacing: 1rpx;
+}
+
+/* 数字 tabular（价格 / 倒计时对齐） */
+.c-num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 价格红大字 */
+.c-price {
+  color: var(--c-red);
+  font-weight: 700;
+}
+
+/* ════════════════════════════════════════════════════════
+ * 全局工具类（页面分段节奏 / 弱提示 / 分隔线 / 占位底 / CTA 让位）
+ * ════════════════════════════════════════════════════════ */
+
+/* 区块横向 padding + 顶部竖向节奏 */
+.c-block {
+  padding: var(--c-gap-card) var(--c-gap-page) 0;
+}
+.c-block--tail {
+  padding-bottom: var(--c-gap-section);
+}
+
+/* loading / empty / 弱提示文字（统一弱墨灰度） */
+.c-hint {
+  padding: var(--c-gap-card) var(--c-gap-page);
+  font-size: var(--c-fs-sm);
+  color: var(--c-ink-3);
+  line-height: 1.6;
+}
+
+/* 分隔线（发丝线） */
+.c-divider {
+  border-top: var(--c-divider);
+}
+.c-divider--dashed {
+  border-top: var(--c-dash);
+}
+
+/* 占位彩纸底工具类（基于 --c-tint-*） */
+.c-tint-pink {
+  background: var(--c-tint-pink);
+}
+.c-tint-red {
+  background: var(--c-tint-red);
+}
+.c-tint-blue {
+  background: var(--c-tint-blue);
+}
+.c-tint-yellow {
+  background: var(--c-tint-yellow);
+}
+.c-tint-green {
+  background: var(--c-tint-green);
+}
+
+/* 底部 fixed CTA 让位 */
+.c-cta-spacer {
+  height: var(--c-cta-spacer);
+}
