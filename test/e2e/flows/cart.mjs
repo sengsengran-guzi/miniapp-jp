@@ -25,7 +25,7 @@
  */
 import { execSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
-import { gotoPage, loginIfNeeded, readAppToken, screenshot, sleep, SHOT_DIR } from '../mp-e2e.mjs'
+import { deep, deepTexts, gotoPage, loginIfNeeded, readAppToken, screenshot, sleep, SHOT_DIR } from '../mp-e2e.mjs'
 
 /** 后端地址（与 preflight / dist 的 VITE_SERVER_BASEURL 一致）。 */
 const BACKEND = process.env.MP_BACKEND || 'http://localhost:8080'
@@ -84,7 +84,13 @@ function yuanOf(cent) {
   return Number.isInteger(y) ? String(y) : y.toFixed(2)
 }
 
-/** 取一组元素的文本，trim 后返回数组。 */
+/**
+ * 取一组元素的文本，trim 后返回数组。
+ *
+ * <p>⚠️ 只对<b>页面模板里</b>的选择器有效（本 flow 里只有 `.jp-cart__group-name` 是）。
+ * 组件内部的（`.biz-cart-item__*` 等）必须用 mp-e2e 的 {@code deepTexts} ——
+ * {@code page.$$} 不跨组件边界，查不到时返回空数组，会把断言悄悄变成恒真。</p>
+ */
 async function textsOf(page, selector) {
   const els = await page.$$(selector).catch(() => [])
   const out = []
@@ -176,7 +182,8 @@ export async function runWith(mp, { event, product, readCart, clearCart }) {
   /* ═══ 第 1、2 跳：首页 → 场详情 → 商品详情（202 已验的两跳，这里当前置）═══ */
 
   const home = await gotoPage(mp, '/pages/index/index', 2500)
-  const eventCard = await home.$('.jp-event-card').catch(() => null)
+  // ★ 场卡 / 商品卡是自定义组件（BizEventCard / BizProductCard）→ deep()，page.$ 恒为 null
+  const eventCard = await deep(home, '.jp-event-card')
   if (!eventCard) throw new Error('首页没有场卡 .jp-event-card —— 第 1 跳的入口不存在（先看 home flow）')
   await eventCard.tap()
   await sleep(2500)
@@ -185,7 +192,7 @@ export async function runWith(mp, { event, product, readCart, clearCart }) {
   if (eventPage?.path !== 'pages/event/index') {
     throw new Error(`第 1 跳失败：点首页场卡后落在 ${JSON.stringify(eventPage?.path)}，期望 "pages/event/index"`)
   }
-  const productCard = await eventPage.$('.jp-product-card').catch(() => null)
+  const productCard = await deep(eventPage, '.jp-product-card')
   if (!productCard) throw new Error('场详情没有商品卡 .jp-product-card —— 第 2 跳的入口不存在')
   await productCard.tap()
   await sleep(2500)
@@ -273,8 +280,8 @@ export async function runWith(mp, { event, product, readCart, clearCart }) {
     console.log(`  ✓ 按场分组，组名来自后端真数据：${JSON.stringify(groupNames)}`)
   }
 
-  // b) 行文案来自后端真数据
-  const itemNames = await textsOf(cartPage, '.biz-cart-item__name')
+  // b) 行文案来自后端真数据（商品名在 BizCartItem 内部 → 跨组件查）
+  const itemNames = await deepTexts(cartPage, '.biz-cart-item__name')
   const expectItemNames = cart.groups.flatMap(g => g.items.map(it => it.name))
   const missingItems = expectItemNames.filter(n => !itemNames.includes(n))
   if (missingItems.length) {
@@ -330,7 +337,8 @@ export async function runWith(mp, { event, product, readCart, clearCart }) {
 
   /* ═══ ★ 改数量实时刷新合计 ═════════════════════════════ */
 
-  const plus = await cartPage.$('.biz-stepper__plus').catch(() => null)
+  // 步进器在 BizStepper 内部（再套一层 BizCartItem）→ 跨组件查
+  const plus = await deep(cartPage, '.biz-stepper__plus')
   if (!plus) {
     fails.push('购物车行内没有数量步进器 .biz-stepper__plus')
   }
@@ -415,7 +423,8 @@ export async function runWith(mp, { event, product, readCart, clearCart }) {
 
   const nowCart = readCart()
   if (nowCart.invalidCount > 0) {
-    const badgeTexts = await textsOf(cartPage, '.biz-cart-item__mask-text')
+    // 「已失效」蒙层文案在 BizCartItem 内部 → 跨组件查
+    const badgeTexts = await deepTexts(cartPage, '.biz-cart-item__mask-text')
     if (!badgeTexts.some(x => x.includes('已失效'))) {
       fails.push(`★ 后端有 ${nowCart.invalidCount} 件失效商品，但页面没渲染「已失效」标 .biz-cart-item__mask-text`)
     }

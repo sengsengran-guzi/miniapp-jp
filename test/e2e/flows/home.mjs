@@ -20,7 +20,7 @@
  */
 import { execSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
-import { gotoPage, screenshot, SHOT_DIR } from '../mp-e2e.mjs'
+import { deep, deepTexts, gotoPage, screenshot, SHOT_DIR } from '../mp-e2e.mjs'
 
 /** 后端地址（与 preflight / dist 的 VITE_SERVER_BASEURL 一致）。 */
 const BACKEND = process.env.MP_BACKEND || 'http://localhost:8080'
@@ -67,7 +67,13 @@ function classify(event, nowMs) {
   return start > nowMs ? 'upcoming' : 'live'
 }
 
-/** 取一组元素的文本（automator Element.text()），trim 后返回数组。 */
+/**
+ * 取一组元素的文本（automator Element.text()），trim 后返回数组。
+ *
+ * <p>⚠️ 只对<b>页面模板里</b>的选择器有效（本 flow 里只有 `.jp-home__group-title` 是）。
+ * 组件内部的（`.jp-event-card__name` 等）必须用 mp-e2e 的 {@code deepTexts} ——
+ * {@code page.$$} 不跨组件边界，查不到时返回空数组，会把断言悄悄变成恒真。</p>
+ */
 async function textsOf(page, selector) {
   const els = await page.$$(selector).catch(() => [])
   const out = []
@@ -111,6 +117,7 @@ export async function runWith(mp, backendEvents) {
   await screenshot(mp, `${SHOT_DIR}/home_1_full.png`)
 
   const fails = []
+  /** 页面模板里的选择器（`.jp-home__*` 全在 pages/index/index.vue）。 */
   const q = async sel => page.$(sel).catch(() => null)
 
   /* ── 区块 ①：轮播 banner ───────────────────────────────── */
@@ -120,8 +127,10 @@ export async function runWith(mp, backendEvents) {
   }
   else {
     // 不塌陷 = swiper 里真有 slide 内容：要么真图 .hb__img，要么内置默认占位 .hb__ph
-    const img = await q('.hb__img')
-    const ph = await q('.hb__ph')
+    // ★ 两者都在 BizHomeBanner 组件内部 → 必须 deep()（page.$ 恒为 null，
+    //   会把「banner 塌陷」误报成必然发生，或者反过来让别处的空断言恒真）
+    const img = await deep(page, '.hb__img')
+    const ph = await deep(page, '.hb__ph')
     if (!img && !ph) {
       fails.push('banner 塌陷：swiper 里既没有图(.hb__img)也没有默认占位(.hb__ph) —— 空轮播')
     }
@@ -136,7 +145,8 @@ export async function runWith(mp, backendEvents) {
     fails.push('缺区块② 场次列表（.jp-home__events 未渲染）')
   }
 
-  const cardNames = await textsOf(page, '.jp-event-card__name')
+  // 场卡标题在 BizEventCard 组件内部 → 跨组件查
+  const cardNames = await deepTexts(page, '.jp-event-card__name')
   if (cardNames.length !== backendEvents.length) {
     fails.push(
       `场卡片数对不上：页面 ${cardNames.length} 张，后端 ${backendEvents.length} 条`
@@ -156,6 +166,7 @@ export async function runWith(mp, backendEvents) {
   }
 
   // 分组标题：独立重算预期，断言「该出现的组都出现了、顺序是 进行中→即将开始→已结束」
+  // （.jp-home__group-title 写在页面模板里 → 页面作用域查询即可）
   const expectedKeys = GROUP_ORDER.filter(k => backendEvents.some(e => classify(e, nowMs) === k))
   const expectedTitles = expectedKeys.map(k => GROUP_LABEL[k])
   const renderedTitles = await textsOf(page, '.jp-home__group-title')
@@ -171,7 +182,8 @@ export async function runWith(mp, backendEvents) {
   }
 
   /* ── 区块 ③：我的订单快捷入口 ─────────────────────────── */
-  const orderEntry = await q('.jp-entry-card')
+  // BizEntryCard 组件内部 → 跨组件查
+  const orderEntry = await deep(page, '.jp-entry-card')
   if (!orderEntry) {
     fails.push('缺区块③ 我的订单快捷入口（.jp-entry-card 未渲染）')
   }

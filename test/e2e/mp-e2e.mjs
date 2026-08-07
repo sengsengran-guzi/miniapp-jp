@@ -163,46 +163,107 @@ export async function assertBackendReachableFromMp(mp, backend = 'http://localho
   throw new Error(`小程序侧 wx.request 打不到后端：${res.err}（后端在 ${backend} 跑着吗？）`)
 }
 
-/* ────────────────────── 深选择器（跨自定义组件）────────────────────── */
+/* ────────────────────── 跨自定义组件查询（xpath）────────────────────── */
 
 /**
  * 每个页面根组件 `<BizScreen class="jp-screen">` 上的**页面级**锚点类。
  *
- * <p><b>为什么需要它</b>（GZ-JP-204 实测踩到，此前一直卡在 devtools 登录所以没人走到这一步）：
- * 微信的 {@code SelectorQuery}（automator 的 {@code page.$} 底层）<b>不跨自定义组件边界</b> ——
- * {@code page.$('.biz-cart-item__name')} / {@code page.$('.jp-event-card')} /
- * {@code page.$('.login-agree__box')} 一律返回 null，哪怕它们就在屏幕上。
- * 官方给的出路是后代选择器 {@code '祖先 >>> 后代'}，但那个「祖先」<b>必须是页面自己模板里写的节点</b>。</p>
- *
- * <p>本工程每页的模板根就是 {@code <BizScreen>}（组件），它<b>内部</b>还挂着 BizLoginSheet ——
- * 于是登录弹层在页面作用域里连一个可选的祖先都没有。给 BizScreen 的<b>使用处</b>加一个
- * {@code class="jp-screen"}（宿主节点写在页面模板里 ⇒ 页面作用域）之后，
- * {@code .jp-screen >>> 任意} 就能打到整棵组件树。</p>
- *
- * <p>这个类<b>没有任何样式</b>，纯锚点。新页照抄 {@code <BizScreen class="jp-screen">} 即可。</p>
+ * <p>用途：{@code page.$('.jp-screen')} 拿整页根节点（页面作用域查得到，因为宿主节点写在
+ * 页面模板里）。<b>跨组件查询已不需要它</b> —— 见下面 {@link deep} 的长注释。</p>
  */
 export const SCREEN_ROOT = '.jp-screen'
+
+/**
+ * ★★ 跨自定义组件查询为什么<b>必须走 xpath、不能走 `>>>`</b>（真模拟器实测结论）
+ *
+ * <p><b>前提</b>：微信 {@code SelectorQuery}（automator {@code page.$} / {@code page.$$} 的底层）
+ * <b>不跨自定义组件边界</b>。{@code page.$('.biz-cart-item__name')} /
+ * {@code page.$('.jp-event-card')} / {@code page.$('.me-header__top')} 一律 null / `[]`，
+ * 哪怕它们就在屏幕上。而 `[]` 会让「页面上不该有 X」这类断言<b>恒真</b> —— 写了等于没写。</p>
+ *
+ * <p><b>官方给的出路 `祖先 >>> 后代` 在本机这套组合上是「静默失效」的</b>
+ * （devtools 2.01 + miniprogram-automator 0.12.1，本卡在真模拟器上逐条实测）：
+ * {@code Page.getElement} 只按<b>祖先那半截</b>匹配，`>>>` 后面整段被忽略 ——</p>
+ * <pre>
+ *   .jp-screen &gt;&gt;&gt; .me-header__top   → HIT，但拿到的是 .jp-screen 自己（text = 整页文字）
+ *   .jp-screen &gt;&gt;&gt; .zzz-根本不存在     → 照样 HIT（同一个节点）    ← 决定性证据
+ *   .block     &gt;&gt;&gt; .zzz-根本不存在     → $$ 返回 2 个，与 .block 单独查一模一样
+ * </pre>
+ * <p>所以 `>>>` 版的 deep() 比不查还坏：元素存在类断言<b>恒真</b>，取到的 text 是<b>整页文本</b>。
+ * （GZ-JP-204 引入 deep() 时因为域名校验没跑通真模拟器，这一层没被照出来。）</p>
+ *
+ * <p><b>真正能跨组件的是 xpath</b>：{@code page.xpath('//*[…class…]')} 实测能打到
+ * BizState / BizEntryCard / BizHomeBanner / MeHeader 内部，拿到的是<b>那个节点本身</b>。
+ * 复数版 {@code page.getElementsByXpath} 在本版本 automator 上直接抛（协议返回里没有
+ * {@code elements} 字段），所以 {@link deepAll} 走「带下标的 xpath 逐个取」。</p>
+ *
+ * <p><b>未命中的判定</b>（同样是实测出来的坑）：{@code page.xpath()} 未命中时<b>不返回 null</b>，
+ * 而是返回一个空壳 Element（{@code tagName} 为 undefined、{@code attribute()/wxml()} 抛、
+ * {@code size()} 是 0x0）。不识别它的话 {@link deepAll} 的下标循环<b>永远不会停</b>、
+ * {@link deep} 又会退回「恒真」。所以这里统一用 {@link isRealElement} 把空壳翻译成 null。</p>
+ */
+const XPATH_SCAN_LIMIT = 60
+
+/** `.foo` / `.foo.bar` / `view` → xpath。只支持这两类，其它一律抛（别让写错的选择器悄悄变成 0 命中）。 */
+function toXpath(selector) {
+  const sel = String(selector).trim()
+  if (/^[a-z][\w-]*$/i.test(sel)) return `//${sel}` // 标签选择器：view / text / image
+  if (!sel.startsWith('.')) {
+    throw new Error(`deep/deepAll/deepTexts 只支持「.类名」或「标签名」，收到：${JSON.stringify(selector)}`)
+  }
+  const classes = sel.slice(1).split('.')
+  if (!classes.length || classes.some(c => !/^[\w-]+$/.test(c))) {
+    throw new Error(`deep/deepAll/deepTexts 只支持「.类名」或「标签名」，收到：${JSON.stringify(selector)}`)
+  }
+  // 精确 token 匹配：`contains(@class,"a")` 会把 `a-btn` 也算进来，前后补空格才是「整个类名」
+  const conds = classes
+    .map(c => `contains(concat(" ", normalize-space(@class), " "), " ${c} ")`)
+    .join(' and ')
+  return `//*[${conds}]`
+}
+
+/** xpath 未命中时给的是空壳 Element（tagName 缺失）——只有真节点才算命中。 */
+function isRealElement(el) {
+  return !!el && typeof el.tagName === 'string' && el.tagName !== ''
+}
+
+/** 取 xpath 结果的第 index 个（1 起）；越界 / 未命中 → null。 */
+async function xpathAt(page, xp, index) {
+  const el = await page.xpath(`(${xp})[${index}]`).catch(() => null)
+  return isRealElement(el) ? el : null
+}
 
 /**
  * 跨组件查单个元素。
  *
  * @param page 页面句柄
  * @param selector 组件内选择器（如 `.biz-cart-item__name`）；<b>不要</b>自己写 `>>>`
- * @param root 页面级祖先（默认 {@link SCREEN_ROOT}）
- * @returns Element 或 null
+ * @returns Element 或 null（未命中）
  */
-export function deep(page, selector, root = SCREEN_ROOT) {
-  return page.$(`${root} >>> ${selector}`).catch(() => null)
+export function deep(page, selector) {
+  return xpathAt(page, toXpath(selector), 1)
 }
 
-/** 跨组件查一组元素（查不到返回 `[]`，不抛）。 */
-export function deepAll(page, selector, root = SCREEN_ROOT) {
-  return page.$$(`${root} >>> ${selector}`).catch(() => [])
+/**
+ * 跨组件查一组元素（未命中返回 `[]`，不抛）。
+ *
+ * @param limit 最多取几个（下标逐个取，每个一次 RPC；默认 {@link XPATH_SCAN_LIMIT}）。
+ *              只关心「够不够 N 个」时传小一点，能省掉大半往返。
+ */
+export async function deepAll(page, selector, limit = XPATH_SCAN_LIMIT) {
+  const xp = toXpath(selector)
+  const out = []
+  for (let i = 1; i <= limit; i++) {
+    const el = await xpathAt(page, xp, i)
+    if (!el) break
+    out.push(el)
+  }
+  return out
 }
 
 /** 跨组件取一组元素的文本（trim 后返回数组）。 */
-export async function deepTexts(page, selector, root = SCREEN_ROOT) {
-  const els = await deepAll(page, selector, root)
+export async function deepTexts(page, selector, limit = XPATH_SCAN_LIMIT) {
+  const els = await deepAll(page, selector, limit)
   const out = []
   for (const el of els) {
     const s = await el.text().catch(() => '')

@@ -144,6 +144,25 @@ GZ-JP-204 逐个试过、**全都压不住**已开着的域名校验，别再重
 写 `project.private.config.json` / `cli close --project` 重开 / 换 appid / 换工程路径新建工程。
 `cli` 也没有对应子命令。
 
+**为什么那些都没用**（后续实测补的定位，省得下次又去翻配置）：devtools 自己存的**工程设置里
+`urlCheck` 就是 `false`**（`~/Library/Application Support/微信开发者工具/<workspace>/WeappLocalData/
+localstorage_*.json`，含 `projectpath` 那份），但校验照样在跑 —— 说明生效的是「本地设置」那个
+**GUI 开关**，和任何叫 `urlCheck` 的配置字段**不是同一个东西**，改文件改不动它。
+
+拦截是**按域名白名单**判的，不是「一律不许联网」：
+
+```
+http://localhost:8080/…       ✗ url not in domain list
+http://127.0.0.1:8080/…       ✗ url not in domain list
+https://guzi.tianda.studio/…  ✓ 200        ← 借用的那个 appid 的合法域名（生产后端！）
+https://api.weixin.qq.com/    ✗ url not in domain list
+```
+
+⚠️ **由此引出一条安全红线**：域名校验开着时，模拟器打得通的恰恰是**生产后端**。
+一旦有人拿 production profile 的产物跑 E2E，cart / checkout 这些会**往生产库真写单**。
+`run.mjs` 的 `distLooksDev`（必须同时命中 `localhost:8080` + `wxMOCKMOCKMOCKMOCK` +
+`mp-applet-gz-jp`）就是拦这个的，**别为了图快把它绕过去**。
+
 顺带两条同源结论：
 
 - **不能用 `touristappid`**：游客模式下 devtools **强制**域名校验，`urlCheck` 完全无效。
@@ -162,16 +181,46 @@ GZ-JP-204 逐个试过、**全都压不住**已开着的域名校验，别再重
 **最阴的地方**：`$$` 查不到时返回 `[]`，于是「页面上不该有 X」这类断言会**恒真**——
 写了跟没写一样。GZ-JP-204 的「清单必须是只读的（无 stepper / 无删除）」原本就中过这一枪。
 
-**用法**：组件内选择器一律走 `mp-e2e.mjs` 的 `deep / deepAll / deepTexts`，
-它们拼的是官方后代选择器 `'.jp-screen >>> 你的选择器'`。
-
-`.jp-screen` 是**页面级锚点**：每个页面的 `<BizScreen class="jp-screen">`（宿主节点写在页面模板里
-⇒ 属页面作用域）。`>>>` 的「祖先」必须是页面自己模板里的节点，而本工程每页的模板根就是 `<BizScreen>`
-组件、登录弹层还挂在它**内部** —— 没有这个锚点，登录 sheet 在页面作用域里连一个可选的祖先都没有。
-**新页照抄 `<BizScreen class="jp-screen">`**（该类无任何样式，纯锚点）。
+**用法**：组件内选择器一律走 `mp-e2e.mjs` 的 `deep / deepAll / deepTexts`（内部走 **xpath**）。
 
 判断规则很简单：选择器定义在 `src/pages/**` 里 → 直接 `page.$`；定义在
 `src/components/biz/**` 里 → 必须 `deep`。
+
+#### ★ 官方的 `祖先 >>> 后代` 在这套组合上是**静默失效**的（真模拟器实测）
+
+devtools 2.01 + `miniprogram-automator@0.12.1`：`Page.getElement` **只按祖先那半截匹配**，
+`>>>` 后面整段被忽略 —— 于是「查到了」的其实是祖先自己：
+
+```
+.jp-screen >>> .me-header__top   → HIT，但拿到的是 .jp-screen（text = 整页文字）
+.jp-screen >>> .zzz-根本不存在     → 照样 HIT（同一个节点）      ← 决定性证据
+.block     >>> .zzz-根本不存在     → $$ 返回 2 个，与 .block 单独查一模一样
+```
+
+这比查不到更坏：**元素存在类断言恒真**、取到的 text 是**整页文本**。
+所以 `>>>` **一个字都不要写**（`self-test.mjs` 的假件见到 `>>>` 会直接抛）。
+
+**真正能跨组件的是 xpath**：`page.xpath('//*[…class…]')` 实测能打到
+BizState / BizEntryCard / BizHomeBanner / MeHeader 内部，且 `tap / attribute / property / text`
+全都正常。两个配套坑（都已封在 `deep` 系列里，自己写 xpath 才要当心）：
+
+- 复数版 `page.getElementsByXpath` 在本版本 automator 上**直接抛**（协议返回里没有 `elements`
+  字段），所以 `deepAll` 走「`(xpath)[n]` 下标逐个取」。
+- `page.xpath()` **未命中不返回 null**，而是给一个空壳 Element（`tagName` 缺失、`attribute()`/
+  `wxml()` 抛、`size()` 为 0x0）。不识别它，下标循环**永远不停**、`deep` 又退回「恒真」。
+- 类名要**精确 token 匹配**（`contains(concat(" ",normalize-space(@class)," ")," foo ")`），
+  否则 `contains(@class,"foo")` 会把 `foo-btn` 一起算进来。
+
+`.jp-screen`（每页 `<BizScreen class="jp-screen">` 上的类）**不再是跨组件查询的必需品**，
+留作「取整页根节点」的页面级锚点（`page.$('.jp-screen')`）。
+
+#### ★ 数 view 判「空壳」要按跨组件口径
+
+`page.$$('view')` 只看得见**页面自己模板里**的 view。本工程空态 / 游客态页的内容全在
+BizPanel + BizState 里，页面作用域只剩两层壳 —— 实测 `pages/cart/index`（游客态）、
+`pages/order/confirm`（空态）、`pages/product/detail`（取数失败）**都只有 2 个**页面级 view。
+`smoke.mjs` 的 `MIN_VIEWS = 3` 若只数页面作用域，会把这几页判成「渲染成空壳」= **假红**。
+现在取「页面作用域 / 跨组件」两个口径的**大值**（跨组件那侧取到阈值就停，省 RPC）。
 
 ### rawPath 瞬态（dist 刚重建后的第一跑）
 
@@ -181,7 +230,7 @@ GZ-JP-204 逐个试过、**全都压不住**已开着的域名校验，别再重
 
 ## 加新 flow（后续所有 mp ticket 都要做）
 
-0. 页面模板根写 `<BizScreen class="jp-screen">`（跨组件深选择器的锚点，见上）。
+0. 页面模板根写 `<BizScreen class="jp-screen">`（整页根节点的页面级锚点；跨组件查询靠 xpath，不靠它）。
 1. 写 `flows/<page>.mjs`，导出 `async run(mp)`，用 `mp-e2e.mjs` 的
    `gotoPage / assertRendered / screenshot / sleep`；**组件内选择器用 `deep / deepAll / deepTexts`**；
    登录态用 `logoutIfLoggedIn / loginIfNeeded / readAppToken / readPersistedUser / hasAgreedPrivacy`。

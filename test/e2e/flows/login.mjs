@@ -15,6 +15,7 @@
  */
 import { mkdirSync } from 'node:fs'
 import {
+  deep,
   gotoPage,
   hasAgreedPrivacy,
   logoutIfLoggedIn,
@@ -45,21 +46,23 @@ export async function run(mp) {
   // 1. 首页点「我的订单」入口 → 触发 useAuth.ensureLoggedIn → 弹协议 sheet
   //    GZ-JP-201 首页重写后，首页不再有独立的「微信登录」按钮（游客优先 / 按需登录）：
   //    订单入口是首页上唯一需要登录态的动作，也就成了首页的登录触发点。
+  //    ★ 本 flow 用到的元素**全在自定义组件内部**（BizEntryCard / BizLoginSheet），一律走 deep()：
+  //      page.$('.jp-entry-card') 恒为 null —— SelectorQuery 不跨自定义组件边界（mp-e2e SCREEN_ROOT 注释）。
   const home = await gotoPage(mp, '/pages/index/index', 1500)
-  const cta = await home.$('.jp-entry-card').catch(() => null)
+  const cta = await deep(home, '.jp-entry-card')
   if (!cta) throw new Error('首页找不到订单入口 .jp-entry-card（页面没渲染？）')
   await cta.tap()
   await sleep(1200)
 
   // 2. 协议 sheet 必须弹出来（游客点敏感动作 → 合规闸门，不是直接登录）
-  const sheet = await home.$('.login-sheet').catch(() => null)
+  const sheet = await deep(home, '.login-sheet')
   if (!sheet) {
     throw new Error('点首页订单入口后没弹出协议同意 sheet .login-sheet（合规闸门失效，或误判为已登录态）')
   }
   await screenshot(mp, `${SHOT_DIR}/login_1_sheet.png`)
 
   // 3. 合规断言：勾选框默认未勾选（.is-on 是勾中态 class）
-  const boxBefore = await home.$('.login-agree__box').catch(() => null)
+  const boxBefore = await deep(home, '.login-agree__box')
   if (!boxBefore) throw new Error('协议 sheet 里找不到勾选框 .login-agree__box')
   const clsBefore = await boxBefore.attribute('class').catch(() => '')
   if (/\bis-on\b/.test(clsBefore || '')) {
@@ -68,7 +71,7 @@ export async function run(mp) {
   console.log('  ✓ 合规：协议勾选框默认未勾选')
 
   // 4. 合规断言：未勾选时登录按钮 disabled
-  const ctaBtn = await home.$('.login-sheet__cta').catch(() => null)
+  const ctaBtn = await deep(home, '.login-sheet__cta')
   if (!ctaBtn) throw new Error('协议 sheet 里找不到登录按钮 .login-sheet__cta')
   const disabledBefore = await ctaBtn.property('disabled').catch(() => undefined)
   if (disabledBefore === false) {

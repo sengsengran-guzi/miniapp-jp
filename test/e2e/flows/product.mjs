@@ -23,7 +23,7 @@
  */
 import { execSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
-import { gotoPage, screenshot, sleep, SHOT_DIR } from '../mp-e2e.mjs'
+import { deep, deepTexts, gotoPage, screenshot, sleep, SHOT_DIR } from '../mp-e2e.mjs'
 
 /** 后端地址（与 preflight / dist 的 VITE_SERVER_BASEURL 一致）。 */
 const BACKEND = process.env.MP_BACKEND || 'http://localhost:8080'
@@ -74,17 +74,6 @@ function firstCardEvent(events, nowMs) {
     if (hit) return hit
   }
   return null
-}
-
-/** 取一组元素的文本（automator Element.text()），trim 后返回数组。 */
-async function textsOf(page, selector) {
-  const els = await page.$$(selector).catch(() => [])
-  const out = []
-  for (const el of els) {
-    const s = await el.text().catch(() => '')
-    out.push(String(s ?? '').trim())
-  }
-  return out
 }
 
 /**
@@ -146,7 +135,10 @@ export async function runWith(mp, { event, products, detail }) {
   /* ═══ 第 1 跳：首页 → 场详情 ═══════════════════════════ */
 
   const home = await gotoPage(mp, '/pages/index/index', 2500)
-  const eventCard = await home.$('.jp-event-card').catch(() => null)
+  // ★ 场卡 / 商品卡都是自定义组件（BizEventCard / BizProductCard）→ 一律 deep()：
+  //   page.$('.jp-event-card') 恒为 null（SelectorQuery 不跨组件边界），
+  //   下面「点第一张卡」的两跳会以「入口不存在」的面目挂掉，看着像页面没渲染。
+  const eventCard = await deep(home, '.jp-event-card')
   if (!eventCard) {
     throw new Error('首页没有场卡 .jp-event-card —— 第 1 跳的入口不存在（先看 home flow）')
   }
@@ -188,8 +180,8 @@ export async function runWith(mp, { event, products, detail }) {
   }
   console.log(`  ✓ 已结束提示条与后端 status=${event.status} 一致（${endedBar ? '已渲染' : '未渲染'}）`)
 
-  // 商品网格文案来自后端真数据
-  const gridNames = await textsOf(eventPage, '.jp-product-card__name')
+  // 商品网格文案来自后端真数据（卡片标题在 BizProductCard 内部 → 跨组件查）
+  const gridNames = await deepTexts(eventPage, '.jp-product-card__name')
   if (gridNames.length !== products.length) {
     fails.push(
       `商品卡数对不上：页面 ${gridNames.length} 张，后端首页 ${products.length} 条`
@@ -209,7 +201,7 @@ export async function runWith(mp, { event, products, detail }) {
 
   /* ═══ 第 2 跳：场详情 → 商品详情 ═══════════════════════ */
 
-  const productCard = await eventPage.$('.jp-product-card').catch(() => null)
+  const productCard = await deep(eventPage, '.jp-product-card')
   if (!productCard) {
     throw new Error('场详情没有商品卡 .jp-product-card —— 第 2 跳的入口不存在')
   }

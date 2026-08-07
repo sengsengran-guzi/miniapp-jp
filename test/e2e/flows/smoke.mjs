@@ -10,11 +10,14 @@
  * 201/202/205…）往 PAGES 里加一行即可 —— 这是 mp ticket「AC X(a) AI 模拟器可达」的落点。
  */
 import { mkdirSync } from 'node:fs'
-import { gotoPage, screenshot, SHOT_DIR } from '../mp-e2e.mjs'
+import { deep, deepAll, gotoPage, screenshot, SHOT_DIR } from '../mp-e2e.mjs'
 
 /**
- * accept = 可接受的最终落地页（首项即目标；列多项表示允许已知重定向）。
- * must   = 该页必须渲染出的标志选择器（不给则只验 view 数）。
+ * accept   = 可接受的最终落地页（首项即目标；列多项表示允许已知重定向）。
+ * must     = 该页必须渲染出的标志选择器（不给则只验 view 数）。
+ * mustDeep = 该标志选择器写在**自定义组件内部**（`src/components/biz/**`），
+ *            必须用跨组件查询 —— `page.$` 对组件内部恒为 null，会把好页面判成没渲染。
+ *            判断规则：选择器定义在 `src/pages/**` → 不填；在 `src/components/**` → 填 true。
  */
 const PAGES = [
   // 首页 tab（启动落地页）。.jp-home__events = 场次区块容器，loading/error/empty/有数据
@@ -22,7 +25,8 @@ const PAGES = [
   // 首页三区块的深度断言在独立的 home flow 里，smoke 只管「可达 + 没渲染成空壳」。
   { path: '/pages/index/index', accept: ['pages/index/index'], must: '.jp-home__events' },
   // 我的 tab。.me-header__top = 头像+昵称头部，未登录/已登录都渲染。
-  { path: '/pages/me/index', accept: ['pages/me/index'], must: '.me-header__top' },
+  // ★ 它在 components/biz/MeHeader.vue 里 → mustDeep（页面模板里只有 .block 这类壳子）。
+  { path: '/pages/me/index', accept: ['pages/me/index'], must: '.me-header__top', mustDeep: true },
   { path: '/pages/me/about', accept: ['pages/me/about'] },
   { path: '/pages/me/profile', accept: ['pages/me/profile'] },
   // 协议正文页带 query（onLoad 按 type 取文档）——顺带验 query 传参没把页面打空。
@@ -52,28 +56,53 @@ const PAGES = [
 ]
 const MIN_VIEWS = 3
 
+/**
+ * 「页面真渲染出内容、不是空壳」的度量 —— <b>页面作用域与跨组件两个口径取大</b>。
+ *
+ * <p><b>为什么不能只数 {@code page.$$('view')}</b>：那只看得见<b>页面自己模板里</b>的 view，
+ * 组件内部渲染的一概不算（SelectorQuery 不跨自定义组件边界）。本工程的空态 / 游客态页
+ * 内容全在 BizPanel + BizState 里，页面作用域只剩两层壳 —— 实测
+ * {@code pages/cart/index}（游客/加载态）、{@code pages/order/confirm}（空态）、
+ * {@code pages/order/result}（无 orderId）都<b>只有 2 个</b>页面级 view，
+ * 阈值 3 会把这三页判成「渲染成空壳」= <b>假红</b>。</p>
+ *
+ * <p>取大而不是直接换成跨组件口径：跨组件查询万一失效会返回 0，取大能退回旧口径，
+ * 不至于把一个真渲染了的页面判死；两个口径都为 0 才是真空壳。</p>
+ *
+ * <p>跨组件口径<b>取到阈值就停</b>（{@code deepAll} 是按下标逐个取、每个一次 RPC）——
+ * 这里只需要回答「够不够 {@link MIN_VIEWS} 个」，没必要把整页几十个 view 都点一遍。</p>
+ */
+async function countViews(page) {
+  const own = (await page.$$('view').catch(() => [])).length
+  const deepViews = (await deepAll(page, 'view', MIN_VIEWS)).length
+  return { own, deep: deepViews, capped: deepViews >= MIN_VIEWS, max: Math.max(own, deepViews) }
+}
+
 export async function run(mp) {
   mkdirSync(SHOT_DIR, { recursive: true })
 
   const fails = []
-  for (const { path: p, accept, must } of PAGES) {
+  for (const { path: p, accept, must, mustDeep } of PAGES) {
     const page = await gotoPage(mp, p)
     const cur = await mp.currentPage()
-    const views = await page.$$('view').catch(() => [])
+    const views = await countViews(page)
     const curPath = cur && cur.path
     const landed = accept.includes(curPath)
-    const rendered = views.length >= MIN_VIEWS
-    const marker = must ? await page.$(must).catch(() => null) : true
+    const rendered = views.max >= MIN_VIEWS
+    const marker = must
+      ? (mustDeep ? await deep(page, must) : await page.$(must).catch(() => null))
+      : true
     const ok = landed && rendered && !!marker
 
     const shotName = p.replace(/^\//, '').replace(/[/?=]/g, '_')
     await screenshot(mp, `${SHOT_DIR}/${shotName}.png`)
 
     const redir = curPath !== p.replace(/^\//, '').split('?')[0] ? ` →redirect→ ${curPath}` : ''
-    console.log(`  ${ok ? '✓' : '✗'} ${p}${redir}  (views=${views.length}${must ? `, ${must}=${marker ? 'yes' : 'NO'}` : ''})`)
+    const viewsDesc = `views=${views.max}(页面${views.own}/跨组件${views.deep}${views.capped ? '+' : ''})`
+    console.log(`  ${ok ? '✓' : '✗'} ${p}${redir}  (${viewsDesc}${must ? `, ${must}=${marker ? 'yes' : 'NO'}` : ''})`)
     if (!ok) {
       fails.push(
-        `${p}: landed=${curPath}(accept=${accept.join('|')}), views=${views.length}`
+        `${p}: landed=${curPath}(accept=${accept.join('|')}), ${viewsDesc}`
         + (must ? `, ${must}=${marker ? 'found' : 'MISSING'}` : ''),
       )
     }

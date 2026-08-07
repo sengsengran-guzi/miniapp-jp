@@ -15,11 +15,18 @@
  * 「断言真的会 fail」这件事有人守着（只写 happy 的断言常年恒真，等于没写）。</p>
  */
 
+// node 内置模块（静态 import 会被提升到文件最前面执行 —— 它们不读下面那个环境变量，无副作用）
+import { readdirSync, readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 // 假句柄的「渲染」是瞬时的，flow 里为真模拟器准备的 sleep 纯属空等 —— 归零后整轮秒级。
 // ★ 只缩放等待时长，不改任何断言、不跳过任何步骤（见 mp-e2e.mjs 的 SLEEP_SCALE 注释）。
 // 必须在 import flow 之前设置：mp-e2e.mjs 在模块加载时读一次该值。
 process.env.MP_E2E_SLEEP_SCALE = '0'
 
+// 真 deep()/deepAll()：meta 用例拿它跑一遍「mp-e2e 造 xpath → 假件反解析」的闭环
+const { deep: deepQuery, deepAll: deepAllQuery } = await import('./mp-e2e.mjs')
 const { run: runSmoke } = await import('./flows/smoke.mjs')
 const { run: runLogin } = await import('./flows/login.mjs')
 const { runWith: runHomeWith } = await import('./flows/home.mjs')
@@ -38,6 +45,9 @@ const { runWith: runCheckoutWith } = await import('./flows/checkout.mjs')
  */
 function makeEl(getSpec, onTap, hooks = {}) {
   return {
+    // 真 automator 的 Element 有 tagName；mp-e2e 靠它区分「xpath 命中」与「未命中的空壳」
+    // （未命中时 devtools 也会给一个对象，只是 tagName 缺失）——假件不给就等于全都算未命中。
+    tagName: getSpec()?.tag ?? 'view',
     tap: async () => { onTap && onTap() },
     attribute: async name => getSpec()?.attrs?.[name],
     property: async name => getSpec()?.props?.[name],
@@ -58,15 +68,101 @@ function makeEl(getSpec, onTap, hooks = {}) {
  * @param {(sel:string)=>void} cfg.onTap       点击副作用
  */
 /**
- * 把跨组件深选择器 `.jp-screen >>> .biz-x` 归一成 `.biz-x`。
+ * 拦住手写的 `祖先 >>> 后代`。
  *
- * <p>真 automator 里 `>>>` 是必需的（SelectorQuery 不跨自定义组件边界），
- * 但假件没有组件树这回事 —— 场景定义里继续写朴素选择器，这里统一剥掉前缀，
- * 于是「flow 用了 deep 还是没用 deep」不会影响 self-test 的可读性。</p>
+ * <p>它在真 devtools 上是<b>静默失效</b>的：只按祖先匹配，`>>>` 后半截被整段忽略，
+ * 于是「查到了」的其实是祖先自己（见 mp-e2e.mjs {@code deep} 的实测记录）。
+ * 假件<b>不能</b>把它当成能用 —— 那会让 self-test 绿而真模拟器红。
+ * 跨组件一律走 {@code deep/deepAll/deepTexts}（xpath 实现）。</p>
  */
-function normalizeSel(sel) {
-  const i = String(sel).lastIndexOf('>>>')
-  return i < 0 ? sel : String(sel).slice(i + 3).trim()
+function rejectLegacyDeepSelector(sel) {
+  if (String(sel).includes('>>>')) {
+    throw new Error(
+      `选择器用了 '>>>'（${sel}）—— 它在真 devtools 上静默失效（只匹配祖先），`
+      + '跨组件请改用 mp-e2e 的 deep/deepAll/deepTexts',
+    )
+  }
+}
+
+/**
+ * 反解析 mp-e2e {@code toXpath} 造出来的 xpath，还原成「选择器 + 第几个」。
+ *
+ * <p>假件没有真 DOM，只能按约定回读：`(//*[contains(…" foo "…)])[2]` → `{ sel: '.foo', index: 2 }`、
+ * `(//view)[3]` → `{ sel: 'view', index: 3 }`。解析不出来就<b>抛</b> ——
+ * 说明 mp-e2e 换了 xpath 写法而这里没跟上，宁可红也不要静默返回 null（那会让 flow 假绿）。</p>
+ */
+function parseXpath(xp) {
+  const s = String(xp)
+  const idx = /\)\[(\d+)\]\s*$/.exec(s)
+  const index = idx ? Number(idx[1]) : 1
+  const classes = [...s.matchAll(/normalize-space\(@class\), " "\), " ([\w-]+) "\)/g)].map(m => m[1])
+  if (classes.length) return { sel: `.${classes.join('.')}`, index }
+  const tag = /\/\/([a-z][\w-]*)/i.exec(s)
+  if (tag) return { sel: tag[1], index }
+  throw new Error(`假件看不懂这个 xpath（mp-e2e 的 toXpath 改了写法？）：${xp}`)
+}
+
+/* ───────────── 组件边界（假件必须复刻的 automator 真语义）───────────── */
+
+/**
+ * 扫 src 的**模板区**，收集 `class="…"`（含 `:class="{ 'x': y }"` 里的字面量）出现过的类名。
+ * 只扫 `<template>` 到 `</template>`，避开 `<style>` 里的选择器 ——
+ * 页面样式常有 `:deep(.biz-xxx)` 这类跨组件覆写，混进来会把组件内部的类误判成页面作用域的。
+ */
+function collectTemplateClasses(dir, out = new Set()) {
+  for (const ent of readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, ent.name)
+    if (ent.isDirectory()) { collectTemplateClasses(p, out); continue }
+    if (!ent.name.endsWith('.vue')) continue
+    const src = readFileSync(p, 'utf8')
+    const start = src.indexOf('<template')
+    const end = src.lastIndexOf('</template>')
+    if (start < 0 || end <= start) continue
+    const tpl = src.slice(start, end)
+    for (const m of tpl.matchAll(/\bclass="([^"]*)"/g)) {
+      for (const c of m[1].split(/\s+/)) if (c && !/[{}]/.test(c)) out.add(c)
+    }
+    for (const m of tpl.matchAll(/'([\w-]+)'\s*:/g)) out.add(m[1]) // :class="{ 'is-on': x }"
+  }
+  return out
+}
+
+const SRC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src')
+
+/**
+ * 「只存在于自定义组件内部」的类名集合 = 组件模板里出现过、页面模板里没出现过。
+ *
+ * <p><b>这是本假件最重要的一条真语义</b>（GZ-JP-204 踩出来的）：微信 {@code SelectorQuery}
+ * 不跨自定义组件边界，页面作用域查组件内部的类<b>恒为 null / 空数组</b>。空数组最阴 ——
+ * 「页面上不该有 X」这类断言会因此<b>恒真</b>，写了等于没写。</p>
+ *
+ * <p>假件如果对 `page.$('.biz-x')` 与 `deep(page,'.biz-x')` 一视同仁，就照不出「flow 忘了用
+ * deep()」这类 bug，self-test 全绿而真模拟器必红 —— 那正是 D2/D3 那几个 flow 的处境。
+ * 所以这里按 src 真实归属判定：<b>组件内部的类，只有带 `>>>` 的查询才看得见</b>。</p>
+ *
+ * <p>归属从 src 现算，不写死清单 —— 组件重构 / 类名改名后不会悄悄失真。</p>
+ */
+const COMPONENT_ONLY_CLASSES = (() => {
+  const pageCls = collectTemplateClasses(path.join(SRC_DIR, 'pages'))
+  // 页面之外的一切（components/ layouts/ tabbar/ …）都是「组件作用域」
+  const otherCls = new Set()
+  for (const ent of readdirSync(SRC_DIR, { withFileTypes: true })) {
+    if (!ent.isDirectory() || ent.name === 'pages') continue
+    collectTemplateClasses(path.join(SRC_DIR, ent.name), otherCls)
+  }
+  if (!pageCls.size || !otherCls.size) {
+    throw new Error(
+      `扫不到 src 模板里的类名（pages=${pageCls.size} / others=${otherCls.size}）——`
+      + ' 组件边界模拟会失效，self-test 会变成假绿。检查 SRC_DIR 是否还对：' + SRC_DIR,
+    )
+  }
+  return new Set([...otherCls].filter(c => !pageCls.has(c)))
+})()
+
+/** 该选择器是不是「只在组件内部存在」（⇒ 页面作用域查询必须查不到）。 */
+function isComponentOnly(sel) {
+  const m = /^\.([\w-]+)$/.exec(String(sel).trim())
+  return !!m && COMPONENT_ONLY_CLASSES.has(m[1])
 }
 
 function makeMp(cfg) {
@@ -88,8 +184,10 @@ function makeMp(cfg) {
       }
       return out
     },
-    $: async (rawSel) => {
-      const sel = normalizeSel(rawSel)
+    $: async (sel) => {
+      rejectLegacyDeepSelector(sel)
+      // ★ 真语义：页面作用域查组件内部 → null（不是「查得到」）。见 COMPONENT_ONLY_CLASSES。
+      if (isComponentOnly(sel)) return null
       const getSpec = () => cfg.pageFor(cur.split('?')[0]).els?.[sel]
       return getSpec()
         ? makeEl(getSpec, () => cfg.onTap?.(sel), {
@@ -98,15 +196,43 @@ function makeMp(cfg) {
           })
         : null
     },
-    // 真 automator 的 $$ 按选择器查全部匹配节点。smoke 只用它数 view，
-    // home 要用它取一组文本（场卡片名 / 分组标题），所以 lists 里登记过的选择器返回带 text 的假元素。
-    $$: async (rawSel) => {
-      const sel = normalizeSel(rawSel)
+    // 真 automator 的 $$ 按选择器查全部匹配节点。smoke 用它数 view，
+    // home/cart 要用它取一组文本（场卡片名 / 分组标题 / 车里的商品名），所以 lists 里登记过的
+    // 选择器返回带 text 的假元素。
+    $$: async (sel) => {
+      rejectLegacyDeepSelector(sel)
       const spec = cfg.pageFor(cur.split('?')[0])
+      // ★ 真语义：页面作用域查组件内部 → 空数组（最阴的一种失败：让「不该有 X」恒真）
+      if (isComponentOnly(sel)) return []
       const list = spec.lists?.[sel]
       if (list) return list.map(text => makeEl(() => ({ text }), () => cfg.onTap?.(sel)))
+      // 数 view：页面作用域只看得见页面自己模板里的那些（组件渲染出来的要走 xpath，见下）
       if (sel === 'view') return Array.from({ length: spec.views ?? 10 })
       return []
+    },
+    /**
+     * 跨组件查询（mp-e2e 的 deep/deepAll/deepTexts 都落到这里）。
+     *
+     * <p>与 {@code $}/{@code $$} 的关键区别：xpath <b>看得见组件内部</b>（真 automator 实测如此），
+     * 所以这里不做组件边界拦截；但「未命中 → null」必须照做 —— deepAll 的下标循环靠它收敛。</p>
+     */
+    xpath: async (xp) => {
+      const { sel, index } = parseXpath(xp)
+      const spec = cfg.pageFor(cur.split('?')[0])
+      const list = spec.lists?.[sel]
+      if (list) {
+        const text = list[index - 1]
+        return text === undefined ? null : makeEl(() => ({ text }), () => cfg.onTap?.(sel))
+      }
+      if (sel === 'view') {
+        return index <= ((spec.viewsDeep ?? spec.views) ?? 10) ? makeEl(() => ({}), () => {}) : null
+      }
+      const getSpec = () => cfg.pageFor(cur.split('?')[0]).els?.[sel]
+      if (index !== 1 || !getSpec()) return null
+      return makeEl(getSpec, () => cfg.onTap?.(sel), {
+        onInput: v => cfg.onInput?.(sel, v),
+        onTrigger: (type, detail) => cfg.onTrigger?.(sel, type, detail),
+      })
     },
   })
   return {
@@ -131,22 +257,33 @@ function makeMp(cfg) {
 
 /* ───────────────────────────── 场景 ───────────────────────────── */
 
+/**
+ * smoke 的页表。
+ *
+ * <p><b>views vs viewsDeep</b>（照着真产物填，别拍脑袋）：{@code views} = <b>页面自己模板里</b>
+ * 渲染出的 view 数（{@code page.$$('view')} 看得见的），{@code viewsDeep} = 连组件内部一起算
+ * （{@code '.jp-screen >>> view'}）。本工程空态 / 游客态页的内容全在 BizPanel + BizState 里，
+ * 页面作用域只剩两层壳 —— 下面 {@code views: 2} 的三页是<b>数真编译产物数出来的</b>
+ * （dist 的 pages/cart/index.wxml 等），smoke 若退回「只数页面作用域 view」就会把它们
+ * 判成空壳假红。这三行等于把那个约束钉在这里，不用再靠人记。</p>
+ */
 const ALL_PAGES = {
   // GZ-JP-201 起首页标志元素是 .jp-home__events（场次区块，四态都渲染）
-  'pages/index/index': { views: 12, els: { '.jp-home__events': {} } },
-  'pages/me/index': { views: 12, els: { '.me-header__top': {} } },
-  'pages/me/about': { views: 8 },
-  'pages/me/profile': { views: 14 },
-  'pages/agreement/index': { views: 9 },
-  'pages/login/index': { views: 10 },
+  'pages/index/index': { views: 8, viewsDeep: 40, els: { '.jp-home__events': {} } },
+  // 游客态页面级只有 .block / .section-title-wrap / .block--tail 三层壳，内容全在 MeHeader/MeGrid 里
+  'pages/me/index': { views: 3, viewsDeep: 24, els: { '.me-header__top': {} } },
+  'pages/me/about': { views: 6, viewsDeep: 14 },
+  'pages/me/profile': { views: 10, viewsDeep: 20 },
+  'pages/agreement/index': { views: 4, viewsDeep: 9 },
+  'pages/login/index': { views: 7, viewsDeep: 16 },
   // GZ-JP-202 新增两页
-  'pages/event/index': { views: 16, els: { '.jp-event-detail__grid': {} } },
-  'pages/product/detail': { views: 16, els: { '.jp-product-detail': {} } },
-  // GZ-JP-203 新增一页
-  'pages/cart/index': { views: 14, els: { '.jp-cart': {} } },
-  // GZ-JP-204 新增两页
-  'pages/order/confirm': { views: 14, els: { '.jp-confirm': {} } },
-  'pages/order/result': { views: 10, els: { '.jp-payres': {} } },
+  'pages/event/index': { views: 12, viewsDeep: 30, els: { '.jp-event-detail__grid': {} } },
+  'pages/product/detail': { views: 14, viewsDeep: 30, els: { '.jp-product-detail': {} } },
+  // GZ-JP-203 新增一页。★ 游客/加载态页面级只有 .jp-cart + .jp-pad(jp-cart__state) 两个 view
+  'pages/cart/index': { views: 2, viewsDeep: 9, els: { '.jp-cart': {} } },
+  // GZ-JP-204 新增两页。★ smoke 不带 ids ⇒ 空态；不带 orderId ⇒ 轮询态，都只有两层页面级壳
+  'pages/order/confirm': { views: 2, viewsDeep: 9, els: { '.jp-confirm': {} } },
+  'pages/order/result': { views: 2, viewsDeep: 9, els: { '.jp-payres': {} } },
 }
 
 /** smoke 用：按路径查表，路径原样落地（无重定向）。 */
@@ -822,6 +959,75 @@ function runCheckout(opts) {
 /* ───────────────────────────── 用例 ───────────────────────────── */
 
 const CASES = [
+  /* ── 假件自身的体检：组件边界模拟必须真的在起作用 ─────────────────────
+     这是本文件最容易「悄悄失效」的一环 —— src 目录挪位置 / 模板重构 / 扫不到 class，
+     组件边界模拟就退化成 no-op：组件内选择器在页面作用域也查得到，于是**所有 flow
+     用不用 deep() 都能过**，self-test 全绿而真模拟器全红（GZ-JP-204 之前正是这个处境）。
+     下面三条把它钉死：归属判定对 + 真语义对。 */
+  {
+    name: 'meta / 组件内部的类必须被判成组件作用域（否则 flow 用不用 deep 都过 = 全体假绿）',
+    expect: 'pass',
+    run: async () => {
+      // 逐一核对过归属（`grep -rn class= src`）：这些只出现在 src/components/** 的模板里
+      const componentOnly = [
+        '.biz-cart-item__name', '.biz-cart-item__mask-text', '.biz-stepper__plus', '.biz-state__text',
+        '.jp-event-card', '.jp-event-card__name', '.jp-product-card', '.jp-product-card__name',
+        '.jp-entry-card', '.login-sheet', '.login-agree__box', '.login-sheet__cta',
+        '.me-header__top', '.hb__ph', '.hb__img',
+      ]
+      const bad = componentOnly.filter(s => !isComponentOnly(s))
+      if (bad.length) {
+        throw new Error(
+          `这些选择器写在 src/components/** 里，却没被判成组件作用域：${bad.join(' / ')}`
+          + '（组件边界模拟失效 = 本文件所有断言都不再管 flow 有没有用 deep()）',
+        )
+      }
+    },
+  },
+  {
+    name: 'meta / 页面模板里的类必须仍是页面作用域（别把 deep 当万能药乱套）',
+    expect: 'pass',
+    run: async () => {
+      const pageScope = [
+        '.jp-home__events', '.jp-home__group-title', '.jp-cart', '.jp-cart-bar__checkout',
+        '.jp-cart__group-name', '.jp-confirm', '.jp-confirm-sum', '.jp-payres', '.logout-btn',
+        '.jp-product-detail', '.jp-product-cta__btn', '.jp-event-detail__grid',
+      ]
+      const bad = pageScope.filter(s => isComponentOnly(s))
+      if (bad.length) {
+        throw new Error(`这些选择器写在 src/pages/** 里，却被判成组件作用域：${bad.join(' / ')}（归属扫描算错了）`)
+      }
+    },
+  },
+  {
+    name: 'meta / 页面作用域查组件内部→查不到，deep()→查得到，>>> →直接报错（automator 真语义）',
+    expect: 'pass',
+    run: async () => {
+      const page = await smokeMp().reLaunch('/pages/me/index')
+      if (await page.$('.me-header__top')) {
+        throw new Error('page.$ 查到了组件内部的 .me-header__top —— 假件没复刻「不跨组件边界」')
+      }
+      if ((await page.$$('.me-header__top')).length) {
+        throw new Error('page.$$ 查到了组件内部的 .me-header__top —— 「不该存在 X」的断言会因此恒真')
+      }
+      // ★ 用**真** deep()（走 mp-e2e 的 toXpath → 假件的 xpath 反解析），
+      //   等于顺带守住「mp-e2e 改了 xpath 写法而假件没跟上」这条缝
+      if (!await deepQuery(page, '.me-header__top')) {
+        throw new Error('deep() 查不到 .me-header__top —— mp-e2e 的 xpath 与假件的反解析对不上了')
+      }
+      if (await deepQuery(page, '.zzz-nonexistent')) {
+        throw new Error('deep() 对不存在的选择器也返回了元素 —— 「元素存在」类断言会恒真')
+      }
+      if ((await deepAllQuery(page, '.zzz-nonexistent')).length) {
+        throw new Error('deepAll() 对不存在的选择器返回了非空 —— 下标循环没有正确收敛')
+      }
+      let rejected = false
+      await page.$('.jp-screen >>> .me-header__top').catch(() => { rejected = true })
+      if (!rejected) {
+        throw new Error('`>>>` 写法没被拦下 —— 它在真 devtools 上静默失效，假件放行就会制造假绿')
+      }
+    },
+  },
   {
     name: 'smoke / 全部页面正常 → 通过',
     expect: 'pass',
