@@ -41,6 +41,14 @@ const PAGES = [
   // 五态都渲染这个节点。不用 .jp-cart-bar（底部条只在有数据时才有，smoke 不保证登录态更不保证车里有东西）。
   // 深度断言（加购真落库 / 三跳可达 / 合计 / 去结算闸门）在独立的 cart flow 里。
   { path: '/pages/cart/index', accept: ['pages/cart/index'], must: '.jp-cart' },
+  // GZ-JP-204 下单确认：标志元素取页面根容器 .jp-confirm —— loading / 游客 / 取数失败 /
+  // 「勾选项已不在」/ 正常五态都渲染它。smoke 不带 ids（reLaunch 直达，无 query）⇒ 命中
+  // 「没有可结算的商品」空态，这正是要锁的行为：直接 reLaunch 到确认页不该白屏也不该崩。
+  // 深度断言（地址 / 只读清单 / 两行金额 / 已阅读闸门 / 提交到支付）在独立的 checkout flow 里。
+  { path: '/pages/order/confirm', accept: ['pages/order/confirm'], must: '.jp-confirm' },
+  // GZ-JP-204 支付结果：不带 orderId ⇒ 不轮询，停在「正在确认支付结果」转圈态（BizState）。
+  // 标志元素取根容器 .jp-payres（四个阶段都渲染它）。
+  { path: '/pages/order/result', accept: ['pages/order/result'], must: '.jp-payres' },
 ]
 const MIN_VIEWS = 3
 

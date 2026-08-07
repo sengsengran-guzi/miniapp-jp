@@ -12,8 +12,29 @@ import { existsSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { preflight } from './preflight.mjs'
-import { launch, safeDisconnect } from './mp-e2e.mjs'
+import { assertBackendReachableFromMp, launch, safeDisconnect, sleep } from './mp-e2e.mjs'
 import { buildDist } from './build-dist.mjs'
+
+/**
+ * 启动自动化，撞到 devtools 的 `rawPath` 瞬态就自动重来一次。
+ *
+ * <p>`Cannot destructure property 'rawPath' of 't.getPageMetaByWebviewId(...)' as it is null`
+ * 是 devtools **重新导入 / 重新编译工程后第一次连自动化**时的固定现象（dist 刚重建、
+ * appid 刚被改写、工程刚被 close 过都会触发）：IDE 还在重建 webview，automator 拿到一个
+ * 空的 page meta。**它与被测代码无关**，重来一次就好 —— 不重试的话每次改完代码的第一跑
+ * 都会红，久了就没人信这个 gate 了。</p>
+ */
+async function launchWithRetry(dist) {
+  try {
+    return await launch({ projectPath: dist })
+  }
+  catch (e) {
+    if (!/rawPath|getPageMetaByWebviewId/.test(e.message || '')) throw e
+    console.log('[run] devtools 重建工程中（rawPath 瞬态）→ 5 秒后重试一次')
+    await sleep(5000)
+    return launch({ projectPath: dist })
+  }
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MINIAPP = path.resolve(__dirname, '../..')
@@ -24,6 +45,7 @@ const FLOWS = {
   home: () => import('./flows/home.mjs'),
   product: () => import('./flows/product.mjs'),
   cart: () => import('./flows/cart.mjs'),
+  checkout: () => import('./flows/checkout.mjs'),
 }
 
 /**
@@ -73,8 +95,14 @@ async function main() {
   let mp
   try {
     console.log(`[run] launch automation  dist=${dist}`)
-    mp = await launch({ projectPath: dist })
+    mp = await launchWithRetry(dist)
     console.log('[run] ✓ automation launched')
+
+    // 硬 gate：小程序自己能不能打到本地后端（preflight 那条是 node 用 curl 探的，
+    // 探不出 devtools 的「不校验合法域名」开关关着 —— 那会让所有 flow 以「登录失败 /
+    // 页面停在 loading」的面目挂掉，看着像代码 bug）
+    await assertBackendReachableFromMp(mp)
+    console.log('[run] ✓ 小程序侧 wx.request 能打到本地后端（域名校验已放开）')
 
     let failures = 0
     for (const name of names) {

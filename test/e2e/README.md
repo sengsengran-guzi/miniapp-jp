@@ -53,6 +53,14 @@ node test/e2e/run.mjs product
 # ⚠️ 会先清空该测试用户的购物车拿确定性起点（dev 的 wxMOCK 用户，userId=14）
 node test/e2e/run.mjs cart
 
+# 下单确认 + 支付（GZ-JP-204）。★ 需登录态。真点购物车「去结算」→ 确认页，断言：
+# 带过去的是【购物车项 id】不是商品 id、默认地址自动选中、**新增地址走真表单真落库**、
+# 商品清单只读（无 stepper / 无删除）、★★ 金额区恰好两行且无配送费用字样、
+# ★★「已阅读不支持退款」闸门双向（未勾置灰 / 勾上可点）、提交后**后端订单真多一张**、
+# dev mock 支付把订单驱动到 paid 且商品行进 purchasing、下单后购物车被清空。
+# ⚠️ 会清空该测试用户的购物车 + 新增一条地址（dev 的 wxMOCK 用户，userId=14）
+node test/e2e/run.mjs checkout
+
 # 全部（串行）
 node test/e2e/run.mjs all
 
@@ -88,6 +96,10 @@ kevin-qa 按 ticket 涉及的页选 flow 跑；非 0 = gate 失败，闭环回 c
 | 5 | dist 是 dev profile（本地后端 + wxMOCK + jp clientid） | ✅ |
 | 6 | 后端在跑（`localhost:8080`，401 也算活着） | ✅ |
 | 7 | 后端认 `clientid=mp-applet-gz-jp`（GZ-SYS-020 多 appid 底座在不在） | ✅ |
+| 8 | **小程序自己**的 `wx.request` 能打到本地后端（launch 之后跑，见下） | ✅ |
+
+第 8 项在 `run.mjs` 里、launch 之后跑（`assertBackendReachableFromMp`）：第 6 项是 **node 用 curl** 探的，
+只证明后端活着；小程序的请求走 devtools 网络栈，中间还隔一道「不校验合法域名」开关。
 
 起后端：`cd code/main/RuoYi-Vue-Plus && mvn spring-boot:run -pl ruoyi-admin`
 起基础设施：`docker compose -f script/docker/dev-compose.yml up -d`（MySQL / Redis / MinIO）
@@ -118,11 +130,61 @@ IDE 登录过期（`cli islogin` → `{"login":false}`）时表象有两种，**
 **修法只有一个：打开微信开发者工具，用手机微信扫码登录。**（本机一次性人工动作，脚本代不了。）
 preflight 第 3 项就是为了把这半天排查压成一句话。
 
+### ★★ 「不校验合法域名」没勾 —— 表象是「登录失败 / 页面全停在 loading」
+
+小程序里所有 `uni.request` 一律 `request:fail url not in domain list`，于是：
+flow 报「登录失败」、smoke 报某些页 `views` 不够（其实是停在 loading 态）。**看着像代码 bug，不是。**
+
+**修法只有一个（本机一次性人工动作）**：
+微信开发者工具 → 打开本工程（`dist/build/mp-weixin`）→ 右上角「详情」→「本地设置」→
+勾上 **「不校验合法域名、web-view（业务域名）、TLS 版本以及 HTTPS 证书」**。
+
+GZ-JP-204 逐个试过、**全都压不住**已开着的域名校验，别再重复试：
+`project.config.json` 的 `setting.urlCheck:false`（uni 已按 manifest 生成，本来就是 false）/
+写 `project.private.config.json` / `cli close --project` 重开 / 换 appid / 换工程路径新建工程。
+`cli` 也没有对应子命令。
+
+顺带两条同源结论：
+
+- **不能用 `touristappid`**：游客模式下 devtools **强制**域名校验，`urlCheck` 完全无效。
+  所以占位 appid（`wxMOCK...`）会被 `mp-e2e.mjs` 换成一个**真** appid（`WX_DEVTOOLS_E2E_APPID`
+  可覆盖，默认借用现有谷子宇宙小程序的）。只用于本地工程关联，**不影响运行时**：
+  后端按请求头 `clientid` 路由，登录短路看 bundle 里的 `VITE_WX_APPID`（仍是 wxMOCK）。
+- **别写 `project.private.config.json`**：一旦存在，devtools 以它为准解释工程设置，
+  只写半截反而把域名校验**重新打开**。`ensureLaunchableAppid` 会主动删掉它。
+
+### ★★ 选择器不跨自定义组件 —— `page.$('.biz-xxx')` 恒为 null
+
+微信 `SelectorQuery`（automator `page.$` / `$$` 的底层）**不跨自定义组件边界**：
+`.biz-cart-item__name` / `.jp-event-card` / `.login-agree__box` / `.me-header__top` 这类
+**写在组件内部**的类，直接查一律 `null` / `[]`，哪怕它就在屏幕上。
+
+**最阴的地方**：`$$` 查不到时返回 `[]`，于是「页面上不该有 X」这类断言会**恒真**——
+写了跟没写一样。GZ-JP-204 的「清单必须是只读的（无 stepper / 无删除）」原本就中过这一枪。
+
+**用法**：组件内选择器一律走 `mp-e2e.mjs` 的 `deep / deepAll / deepTexts`，
+它们拼的是官方后代选择器 `'.jp-screen >>> 你的选择器'`。
+
+`.jp-screen` 是**页面级锚点**：每个页面的 `<BizScreen class="jp-screen">`（宿主节点写在页面模板里
+⇒ 属页面作用域）。`>>>` 的「祖先」必须是页面自己模板里的节点，而本工程每页的模板根就是 `<BizScreen>`
+组件、登录弹层还挂在它**内部** —— 没有这个锚点，登录 sheet 在页面作用域里连一个可选的祖先都没有。
+**新页照抄 `<BizScreen class="jp-screen">`**（该类无任何样式，纯锚点）。
+
+判断规则很简单：选择器定义在 `src/pages/**` 里 → 直接 `page.$`；定义在
+`src/components/biz/**` 里 → 必须 `deep`。
+
+### rawPath 瞬态（dist 刚重建后的第一跑）
+
+`Cannot destructure property 'rawPath' of 't.getPageMetaByWebviewId(...)' as it is null`
+= devtools 正在重新导入 / 重新编译工程，automator 拿到空的 page meta。**与被测代码无关**。
+`run.mjs` 的 `launchWithRetry` 已自动重试一次；手写脚本撞到就等 5 秒重跑。
+
 ## 加新 flow（后续所有 mp ticket 都要做）
 
+0. 页面模板根写 `<BizScreen class="jp-screen">`（跨组件深选择器的锚点，见上）。
 1. 写 `flows/<page>.mjs`，导出 `async run(mp)`，用 `mp-e2e.mjs` 的
-   `gotoPage / assertRendered / screenshot / sleep`；登录态用
-   `logoutIfLoggedIn / loginIfNeeded / readAppToken / readPersistedUser / hasAgreedPrivacy`。
+   `gotoPage / assertRendered / screenshot / sleep`；**组件内选择器用 `deep / deepAll / deepTexts`**；
+   登录态用 `logoutIfLoggedIn / loginIfNeeded / readAppToken / readPersistedUser / hasAgreedPrivacy`。
    **需要登录的 flow**（购物车 / 下单）：`loginIfNeeded(mp)` 拨到登录态 → `readAppToken(mp)` 拿
    **app 自己那个会话**的 sa-token 去直连后端当独立数据源（别另调一次 wx-login —— 那是另一个会话，
    看到的车可能不是页面上那辆）。

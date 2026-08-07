@@ -216,7 +216,7 @@ onShow(() => {
 </script>
 
 <template>
-  <BizScreen>
+  <BizScreen class="jp-screen">
     <!-- ① 轮播 banner（banner 即 hero；无配置降级单张默认图，不出空轮播） -->
     <view class="jp-pad jp-home__banner">
       <BizHomeBanner :banners="bannerSlides" @tap="onBannerTap" />

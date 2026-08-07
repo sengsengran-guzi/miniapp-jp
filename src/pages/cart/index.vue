@@ -323,7 +323,7 @@ onUnload(() => {
 </script>
 
 <template>
-  <BizScreen>
+  <BizScreen class="jp-screen">
     <view class="jp-cart">
       <!-- 加载态 -->
       <view v-if="loading" class="jp-pad jp-cart__state">

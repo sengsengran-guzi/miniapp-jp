@@ -239,7 +239,7 @@ onShow(() => {
 </script>
 
 <template>
-  <BizScreen>
+  <BizScreen class="jp-screen">
     <view class="jp-product-detail">
       <!-- 加载态 -->
       <view v-if="loading" class="jp-pad jp-product-detail__state">

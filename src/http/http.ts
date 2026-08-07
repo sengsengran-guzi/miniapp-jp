@@ -71,11 +71,13 @@ export function http<T>(options: CustomRequestOptions) {
         if (res.statusCode >= 200 && res.statusCode < 300) {
           // 处理业务逻辑错误
           if (code !== ResultEnum.Success0 && code !== ResultEnum.Success200) {
-            uni.showToast({
+            !options.hideErrorToast
+            && uni.showToast({
               icon: 'none',
               title: responseData.msg || responseData.message || '请求错误',
             })
-            return reject(responseData.data)
+            // rawBizError：reject 整个响应体，调用方才拿得到 code 决定动作（默认仍只给 data，行为不变）
+            return reject(options.rawBizError ? responseData : responseData.data)
           }
           // ruoyi 两种成功响应形态：
           //   1) R<T> = { code, msg, data: T }（绝大多数端点）→ 返回 .data

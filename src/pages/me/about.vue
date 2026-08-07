@@ -34,7 +34,7 @@ function onLink(key: string) {
 </script>
 
 <template>
-  <BizScreen>
+  <BizScreen class="jp-screen">
     <!-- 卡内布局放 __inner 真实子节点（virtualHost 会丢 BizPanel host 上的外部 flex/padding） -->
     <view class="block">
       <BizPanel>

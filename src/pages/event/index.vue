@@ -256,7 +256,7 @@ onReachBottom(() => {
 </script>
 
 <template>
-  <BizScreen>
+  <BizScreen class="jp-screen">
     <view class="jp-event-detail">
       <!-- ① 场信息头 -->
       <view v-if="eventLoading" class="jp-pad jp-event-detail__head">

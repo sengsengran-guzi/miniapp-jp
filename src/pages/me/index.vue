@@ -125,7 +125,7 @@ onShow(() => {
 </script>
 
 <template>
-  <BizScreen>
+  <BizScreen class="jp-screen">
     <!-- 头部：头像 + 昵称（两态） -->
     <view class="block">
       <MeHeader

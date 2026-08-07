@@ -64,6 +64,32 @@ export function simulateCallback(outTradeNo: string): Promise<void> {
 }
 
 /**
+ * 【dev / mock 专用】模拟支付成功回调 —— <b>用户自助版</b>（GZ-JP-204 用的是这个）。
+ *
+ * <pre>POST /app/gz/test/pay/simulate-callback?outTradeNo=&lt;payParams.outTradeNo&gt;</pre>
+ *
+ * <p><b>★ 与上面的 {@link simulateCallback} 是两个端点</b>：那个挂 {@code /system/}
+ * 且要 {@code gz:pay:test} 后台权限（C 端用户调必然 403）；本端点挂 {@code /app/}，
+ * 只要登录态，且<b>只能结算自己的订单</b>（后端比对 {@code tx.userId}，防越权代付）。</p>
+ *
+ * <p>后端前置条件（{@code GzTestController}）：{@code gz.test.enabled=true}
+ * 且 {@code gz.pay.client-mode != real}。dev 默认满足；<b>real profile 会直接抛错</b>，
+ * 所以前端必须靠 {@code VITE_MOCK_PAY} 判断而不是「试试看失败就算了」。</p>
+ *
+ * <p>走的是与真实微信回调<b>同一条处理链</b>（{@code handlePaymentNotify} + SPI 路由），
+ * 所以拼团订单会真的转 {@code paid}、商品行真的激活 —— 不是把状态硬改一下。</p>
+ *
+ * @param outTradeNo ★ 支付单号（{@code payParams.outTradeNo}），<b>不是订单号 orderNo</b>
+ */
+export function simulatePayCallbackSelf(outTradeNo: string): Promise<void> {
+  return http<void>({
+    url: '/app/gz/test/pay/simulate-callback',
+    method: 'POST',
+    query: { outTradeNo },
+  })
+}
+
+/**
  * 查支付单状态（result.vue 轮询等回调到达 paid）。
  */
 export function getPayStatus(outTradeNo: string): Promise<PayTransactionStatusVO> {

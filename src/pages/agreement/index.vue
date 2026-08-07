@@ -27,7 +27,7 @@ onLoad((query) => {
 </script>
 
 <template>
-  <BizScreen>
+  <BizScreen class="jp-screen">
     <view class="block">
       <BizPanel>
         <view class="doc">

@@ -25,6 +25,7 @@ const { run: runLogin } = await import('./flows/login.mjs')
 const { runWith: runHomeWith } = await import('./flows/home.mjs')
 const { runWith: runProductWith } = await import('./flows/product.mjs')
 const { runWith: runCartWith } = await import('./flows/cart.mjs')
+const { runWith: runCheckoutWith } = await import('./flows/checkout.mjs')
 
 /* ───────────────────────── 假 miniProgram 句柄 ───────────────────────── */
 
@@ -35,13 +36,17 @@ const { runWith: runCartWith } = await import('./flows/cart.mjs')
  * flow 里「先拿到 el → tap → 再读同一个 el 的 class」是合法且常用的写法。
  * 假件若快照 spec，就会把这种写法误判成 flow 的 bug。
  */
-function makeEl(getSpec, onTap) {
+function makeEl(getSpec, onTap, hooks = {}) {
   return {
     tap: async () => { onTap && onTap() },
     attribute: async name => getSpec()?.attrs?.[name],
     property: async name => getSpec()?.props?.[name],
     text: async () => getSpec()?.text ?? '',
     wxml: async () => getSpec()?.wxml || '<view/>',
+    // 真 automator 的 Element 有这两个（表单场景要用）：input 往输入框打字、trigger 派发自定义事件
+    // （原生 picker 点不动，只能 trigger('change', {value:[...]})）。
+    input: async value => hooks.onInput && hooks.onInput(value),
+    trigger: async (type, detail) => hooks.onTrigger && hooks.onTrigger(type, detail),
   }
 }
 
@@ -52,19 +57,51 @@ function makeEl(getSpec, onTap) {
  * @param {object} cfg.storage                 uni storage 的模拟
  * @param {(sel:string)=>void} cfg.onTap       点击副作用
  */
+/**
+ * 把跨组件深选择器 `.jp-screen >>> .biz-x` 归一成 `.biz-x`。
+ *
+ * <p>真 automator 里 `>>>` 是必需的（SelectorQuery 不跨自定义组件边界），
+ * 但假件没有组件树这回事 —— 场景定义里继续写朴素选择器，这里统一剥掉前缀，
+ * 于是「flow 用了 deep 还是没用 deep」不会影响 self-test 的可读性。</p>
+ */
+function normalizeSel(sel) {
+  const i = String(sel).lastIndexOf('>>>')
+  return i < 0 ? sel : String(sel).slice(i + 3).trim()
+}
+
 function makeMp(cfg) {
   let cur = '/pages/index/index'
   // ⚠️ 真 automator 的 page.$() 每次都查**当前**渲染树，所以这里也必须每次重新算，
   //    不能在 reLaunch 时快照一份 —— 否则「点一下 → 页面变了」这类交互全测不出来。
   const mkPage = () => ({
     get path() { return cfg.pageFor(cur.split('?')[0]).path },
-    $: async (sel) => {
+    // 真 automator 的 Page 暴露 query（= onLoad 的 options）。flow 用它验「跳转带对了参数」，
+    // 假件必须一起提供，否则那类断言在 self-test 里恒为 undefined = 恒 fail。
+    get query() {
+      const qs = cur.split('?')[1] || ''
+      const out = {}
+      for (const kv of qs.split('&')) {
+        if (!kv) continue
+        const i = kv.indexOf('=')
+        const k = i < 0 ? kv : kv.slice(0, i)
+        out[decodeURIComponent(k)] = i < 0 ? '' : decodeURIComponent(kv.slice(i + 1))
+      }
+      return out
+    },
+    $: async (rawSel) => {
+      const sel = normalizeSel(rawSel)
       const getSpec = () => cfg.pageFor(cur.split('?')[0]).els?.[sel]
-      return getSpec() ? makeEl(getSpec, () => cfg.onTap?.(sel)) : null
+      return getSpec()
+        ? makeEl(getSpec, () => cfg.onTap?.(sel), {
+            onInput: v => cfg.onInput?.(sel, v),
+            onTrigger: (type, detail) => cfg.onTrigger?.(sel, type, detail),
+          })
+        : null
     },
     // 真 automator 的 $$ 按选择器查全部匹配节点。smoke 只用它数 view，
     // home 要用它取一组文本（场卡片名 / 分组标题），所以 lists 里登记过的选择器返回带 text 的假元素。
-    $$: async (sel) => {
+    $$: async (rawSel) => {
+      const sel = normalizeSel(rawSel)
       const spec = cfg.pageFor(cur.split('?')[0])
       const list = spec.lists?.[sel]
       if (list) return list.map(text => makeEl(() => ({ text }), () => cfg.onTap?.(sel)))
@@ -107,6 +144,9 @@ const ALL_PAGES = {
   'pages/product/detail': { views: 16, els: { '.jp-product-detail': {} } },
   // GZ-JP-203 新增一页
   'pages/cart/index': { views: 14, els: { '.jp-cart': {} } },
+  // GZ-JP-204 新增两页
+  'pages/order/confirm': { views: 14, els: { '.jp-confirm': {} } },
+  'pages/order/result': { views: 10, els: { '.jp-payres': {} } },
 }
 
 /** smoke 用：按路径查表，路径原样落地（无重定向）。 */
@@ -523,6 +563,262 @@ function runCart(opts) {
   return runCartWith(mp, data)
 }
 
+/**
+ * checkout 用（GZ-JP-204）：**假 app + 假后端**的下单到支付场景机（比 cart 又深一档）。
+ *
+ * <p>内存版后端同时管四张「表」：购物车 / 地址簿 / 订单 / 订单行。假 app 的 tap 与 input 去改它，
+ * 假页面从它渲染，flow 拿到的 {@code readCart / readAddresses / readOrders / readOrderDetail}
+ * 读的也是它 —— 于是「页面与后端对得上」「订单真落库」「支付真走完」这些断言在假件里同样是
+ * <b>有内容的</b>，negative 只要让两者脱钩就必然 fail。</p>
+ *
+ * 每个可配项都对应一条 negative 能打到的点。
+ */
+function checkoutScenario({
+  priceCent = 12800,
+  qty = 2,
+  /** 起手地址簿（空 = 只能走「新增」路径） */
+  addresses = [{ id: '1', recipientName: '张三', mobile: '13800000000', province: '四川省', city: '成都市', district: '锦江区', detail: '春熙路 1 号', isDefault: 1 }],
+  /** 「去结算」跳到哪（negative：跳错页） */
+  hopConfirm = '/pages/order/confirm',
+  /** 去结算带的参数（negative：传成 productId / 干脆不传） */
+  idsOverride = null,
+  /** 确认页显示的地址收件人（negative：与后端默认地址对不上） */
+  addressNameOverride = null,
+  /** 保存地址是否真落库（negative：只是关了弹层） */
+  saveAddressWorks = true,
+  /** 表单缺哪个字段（negative：新增能力没做全） */
+  omitFormFields = [],
+  /** 页面渲染的商品名（negative：前端 mock 文案） */
+  renderItemNames = null,
+  /** 清单里混进 stepper / 删除（negative：清单不是只读的） */
+  renderStepper = false,
+  renderDelete = false,
+  /** 金额区多一行（negative：出现第三行 / 出现费用字样） */
+  sumExtraRowText = null,
+  /** 金额区显示的实付（negative：与后端 Σ 行金额脱钩） */
+  totalOverride = null,
+  /** 「已阅读不支持退款」勾选是否存在（negative：漏做了举证那一半） */
+  hasAgreeBox = true,
+  /** 勾选文案（negative：文案里没提退款） */
+  agreeCopy = '我已阅读并同意《拼团购买须知》，知悉商品下单后不支持退款',
+  /** 提交闸门写死（negative：恒可点 / 恒置灰） */
+  submitNeverDisabled = false,
+  submitAlwaysDisabled = false,
+  /** 提交是否真建单（negative：点了没反应 / 只跳页不落库） */
+  submitWorks = true,
+  /** 提交后落到哪（negative：没跳支付结果页） */
+  hopResult = '/pages/order/result',
+  /** mock 支付是否真驱动结算（negative：订单停在 created） */
+  payWorks = true,
+  /** 支付后是否清车（negative：车里还留着已经买过的东西） */
+  clearCartOnSubmit = true,
+  /** 结果页文案（negative：后端已 paid 页面还在转圈） */
+  resultTextOverride = null,
+} = {}) {
+  const EVENT_NAME = '8月上旬快闪场'
+  const PRODUCT = { id: '1', name: '柯南 吧唧 一番赏 A赏', priceCent, eventName: EVENT_NAME }
+
+  // ── 内存版后端（4 张表）
+  const be = {
+    cart: [{ id: '57', productId: PRODUCT.id, name: PRODUCT.name, eventName: EVENT_NAME, qty, priceCent, invalid: false }],
+    addresses: addresses.map(a => ({ ...a })),
+    orders: [],
+    seq: 1,
+  }
+
+  const readCart = () => {
+    const items = be.cart.map(it => ({
+      id: it.id,
+      productId: it.productId,
+      name: it.name,
+      priceCent: it.priceCent,
+      qty: it.qty,
+      amountCent: it.priceCent * it.qty,
+      invalid: it.invalid,
+      invalidText: it.invalid ? '本场已结束' : null,
+    }))
+    const valid = items.filter(i => !i.invalid)
+    return {
+      groups: items.length ? [{ eventId: '1', eventName: EVENT_NAME, eventBookable: true, items }] : [],
+      itemCount: items.length,
+      invalidCount: items.length - valid.length,
+      validQty: valid.reduce((s, i) => s + i.qty, 0),
+      validAmountCent: valid.reduce((s, i) => s + i.amountCent, 0),
+    }
+  }
+  const readAddresses = () => be.addresses.map(a => ({ ...a }))
+  const readOrders = () => ({
+    total: be.orders.length,
+    rows: [...be.orders].reverse().map(o => ({
+      id: o.id,
+      orderNo: o.orderNo,
+      totalAmountCent: o.totalAmountCent,
+      businessStatus: o.businessStatus,
+      itemCount: o.items.length,
+    })),
+  })
+  const readOrderDetail = id => be.orders.find(o => String(o.id) === String(id)) ?? null
+
+  const amountOfCart = () => readCart().validAmountCent
+
+  // ── 页面状态
+  const st = { agreed: false, sheet: 'none', form: {}, addrName: null, submitted: false }
+  const currentAddrName = () => {
+    if (addressNameOverride !== null) return addressNameOverride
+    if (st.addrName) return st.addrName
+    const def = be.addresses.find(a => Number(a.isDefault) === 1) ?? be.addresses[0]
+    return def ? def.recipientName : null
+  }
+
+  const yuan = (cent) => {
+    const y = cent / 100
+    return Number.isInteger(y) ? String(y) : y.toFixed(2)
+  }
+
+  const mp = makeMp({
+    storage: { token: JSON.stringify({ tokenInfo: { token: 'fake-sa-token-for-self-test', expiresIn: 999 } }) },
+    onInput: (sel, v) => {
+      if (sel === '.jp-addr-form__name') st.form.recipientName = v
+      if (sel === '.jp-addr-form__mobile') st.form.mobile = v
+      if (sel === '.jp-addr-form__detail') st.form.detail = v
+    },
+    onTrigger: (sel, type, detail) => {
+      if (sel === '.jp-addr-form__region' && type === 'change') {
+        const v = detail?.value ?? []
+        st.form.province = v[0]
+        st.form.city = v[1]
+        st.form.district = v[2]
+      }
+    },
+    onTap: (sel) => {
+      if (sel === '.jp-cart-bar__checkout') {
+        const ids = idsOverride === null ? be.cart.map(i => i.id).join(',') : idsOverride
+        mp.__goto(ids ? `${hopConfirm}?ids=${ids}` : hopConfirm)
+      }
+      if (sel === '.jp-confirm-addr') st.sheet = be.addresses.length ? 'pick' : 'form'
+      if (sel === '.jp-addr-sheet__add') st.sheet = 'form'
+      if (sel === '.jp-addr-form__save') {
+        if (saveAddressWorks) {
+          const id = String(1000 + be.addresses.length)
+          be.addresses.push({
+            id,
+            recipientName: st.form.recipientName,
+            mobile: st.form.mobile,
+            province: st.form.province,
+            city: st.form.city,
+            district: st.form.district,
+            detail: st.form.detail,
+            isDefault: 0,
+          })
+          st.addrName = st.form.recipientName
+        }
+        st.sheet = 'none'
+      }
+      if (sel === '.jp-confirm-agree__box-wrap') st.agreed = !st.agreed
+      if (sel === '.jp-confirm-bar__submit') {
+        const canSubmit = submitAlwaysDisabled ? false : (submitNeverDisabled || st.agreed)
+        if (!canSubmit || st.submitted) return
+        st.submitted = true
+        if (submitWorks) {
+          const id = String(be.seq++)
+          be.orders.push({
+            id,
+            orderNo: `JPO-20260807-00000${id}`,
+            totalAmountCent: amountOfCart(),
+            businessStatus: payWorks ? 'paid' : 'created',
+            businessStatusLabel: payWorks ? '已支付' : '待支付',
+            paidTime: payWorks ? '2026-08-07 07:20:21' : null,
+            items: be.cart.map(it => ({ id: `i${it.id}`, name: it.name, qty: it.qty, fulfillStatus: 'purchasing' })),
+          })
+          if (clearCartOnSubmit) be.cart = []
+        }
+        mp.__goto(hopResult)
+      }
+    },
+    pageFor: (p) => {
+      const key = p.replace(/^\//, '')
+      const els = {}
+      const lists = {}
+
+      if (key === 'pages/me/index') {
+        els['.me-header__top'] = {}
+        els['.logout-btn'] = {} // 恒登录态
+      }
+      if (key === 'pages/index/index') {
+        els['.jp-home__events'] = {}
+        els['.jp-entry-card'] = { text: '我的订单' }
+      }
+      if (key === 'pages/cart/index') {
+        els['.jp-cart'] = {}
+        els['.jp-cart-bar__checkout'] = { attrs: { class: 'jp-cart-bar__checkout' } }
+      }
+      if (key === 'pages/order/confirm') {
+        els['.jp-confirm'] = {}
+        // 地址区
+        els['.jp-confirm-addr'] = {}
+        const an = currentAddrName()
+        if (an) els['.jp-confirm-addr__name'] = { text: an }
+        // 地址弹层
+        if (st.sheet === 'pick') els['.jp-addr-sheet__add'] = {}
+        if (st.sheet === 'form') {
+          const F = {
+            '.jp-addr-form__name': {},
+            '.jp-addr-form__mobile': {},
+            '.jp-addr-form__region': {},
+            '.jp-addr-form__detail': {},
+            '.jp-addr-form__save': {},
+          }
+          for (const [k, v] of Object.entries(F)) {
+            if (!omitFormFields.includes(k)) els[k] = v
+          }
+        }
+        // 金额区（★ 只有两行）
+        const total = totalOverride === null ? yuan(amountOfCart()) : totalOverride
+        const rows = ['商品合计', '实付']
+        if (sumExtraRowText) rows.push(sumExtraRowText)
+        const sumText = `${rows.join(' ')} ¥ ${total} 已包邮`
+        els['.jp-confirm-sum'] = { text: sumText, wxml: `<view class="jp-confirm-sum">${sumText}</view>` }
+        els['.jp-confirm-sum__total'] = { text: total }
+        lists['.jp-confirm-sum__row'] = rows
+        // 已阅读不支持退款
+        if (hasAgreeBox) {
+          els['.jp-confirm-agree__box-wrap'] = {}
+          els['.jp-confirm-agree__text'] = { text: agreeCopy }
+        }
+        // 提交
+        const disabled = submitAlwaysDisabled ? true : submitNeverDisabled ? false : !st.agreed
+        els['.jp-confirm-bar__submit'] = {
+          attrs: { class: `jp-confirm-bar__submit${disabled ? ' is-disabled' : ''}` },
+        }
+        // 清单（只读：默认不出操作区 / stepper / 删除，数量静态展示）
+        const cartRows = readCart().groups.flatMap(g => g.items)
+        lists['.biz-cart-item__name'] = renderItemNames ?? cartRows.map(i => i.name)
+        lists['.biz-cart-item__qty-text'] = renderStepper || renderDelete ? [] : cartRows.map(i => `×${i.qty}`)
+        lists['.biz-cart-item__ops'] = renderStepper || renderDelete ? cartRows.map(() => '') : []
+        lists['.biz-stepper__plus'] = renderStepper ? ['+'] : []
+        lists['.biz-cart-item__del'] = renderDelete ? ['删除'] : []
+      }
+      if (key === 'pages/order/result') {
+        els['.jp-payres'] = {}
+        els['.jp-payres__btn'] = {}
+        const last = be.orders[be.orders.length - 1]
+        const text = resultTextOverride
+          ?? (last && last.businessStatus === 'paid' ? '支付成功' : '正在确认支付结果…')
+        lists['.biz-state__text'] = [text]
+      }
+      return { path: key, views: 16, els, lists }
+    },
+  })
+
+  return { mp, data: { product: PRODUCT, readCart, readAddresses, readOrders, readOrderDetail } }
+}
+
+/** 跑一个 checkout 场景。 */
+function runCheckout(opts) {
+  const { mp, data } = checkoutScenario(opts)
+  return runCheckoutWith(mp, data)
+}
+
 /* ───────────────────────────── 用例 ───────────────────────────── */
 
 const CASES = [
@@ -814,6 +1110,123 @@ const CASES = [
     name: 'cart / ★加购后购物车角标与后端款数对不上 → 必须 fail',
     expect: /购物车角标/,
     run: () => runCart({ badgeOverride: '7' }),
+  },
+
+  /* ───────── checkout（GZ-JP-204）───────── */
+  {
+    name: 'checkout / 下单确认到支付全流程（地址 + 只读清单 + 两行金额 + 已阅读闸门 + mock 支付）→ 通过',
+    expect: 'pass',
+    run: () => runCheckout(),
+  },
+  {
+    name: 'checkout / 地址簿为空时直接走「新增」路径 → 通过',
+    expect: 'pass',
+    run: () => runCheckout({ addresses: [] }),
+  },
+  {
+    name: 'checkout / ★「去结算」跳错页 → 必须 fail',
+    expect: /第 1 跳失败/,
+    run: () => runCheckout({ hopConfirm: '/pages/order/result' }),
+  },
+  {
+    name: 'checkout / ★去结算没带 ids → 必须 fail',
+    expect: /没收到 ids 参数/,
+    run: () => runCheckout({ idsOverride: '' }),
+  },
+  {
+    name: 'checkout / ★★ 去结算传成了商品 id（不是购物车项 id）→ 必须 fail',
+    expect: /不是购物车项 id/,
+    run: () => runCheckout({ idsOverride: '1' }),
+  },
+  {
+    name: 'checkout / ★进页面没自动选中默认地址 → 必须 fail',
+    expect: /默认选中的地址对不上/,
+    run: () => runCheckout({ addressNameOverride: '李四' }),
+  },
+  {
+    name: 'checkout / ★新增地址表单缺字段（新增能力没做全）→ 必须 fail',
+    expect: /新增地址表单不完整/,
+    run: () => runCheckout({ addresses: [], omitFormFields: ['.jp-addr-form__region'] }),
+  },
+  {
+    name: 'checkout / ★★ 点了「保存并使用」但地址没真落库 → 必须 fail',
+    expect: /没有新地址|新增地址后确认页显示的仍是/,
+    run: () => runCheckout({ saveAddressWorks: false }),
+  },
+  {
+    name: 'checkout / ★清单显示前端 mock 商品名 → 必须 fail',
+    expect: /没渲染进清单/,
+    run: () => runCheckout({ renderItemNames: ['某个占位商品'] }),
+  },
+  {
+    name: 'checkout / ★清单里混进了数量步进器（不是只读）→ 必须 fail',
+    expect: /清单不是只读的|只读数量文案/,
+    run: () => runCheckout({ renderStepper: true }),
+  },
+  {
+    name: 'checkout / ★清单里混进了删除按钮（不是只读）→ 必须 fail',
+    expect: /清单不是只读的|只读数量文案/,
+    run: () => runCheckout({ renderDelete: true }),
+  },
+  {
+    name: 'checkout / ★★ 金额区出现第三行（哪怕不叫那个名字）→ 必须 fail',
+    expect: /金额区有 3 行/,
+    run: () => runCheckout({ sumExtraRowText: '其它费用' }),
+  },
+  {
+    name: 'checkout / ★★ 金额区出现配送费用字样 → 必须 fail',
+    expect: /另收费用的字样/,
+    run: () => runCheckout({ sumExtraRowText: '运费' }),
+  },
+  {
+    name: 'checkout / ★实付金额与后端 Σ 行金额脱钩 → 必须 fail',
+    expect: /实付金额对不上/,
+    run: () => runCheckout({ totalOverride: '9.9' }),
+  },
+  {
+    name: 'checkout / ★★ 压根没做「已阅读不支持退款」勾选 → 必须 fail',
+    expect: /没有「已阅读不支持退款」勾选/,
+    run: () => runCheckout({ hasAgreeBox: false }),
+  },
+  {
+    name: 'checkout / ★勾选文案里没提「退款」（举证举了个寂寞）→ 必须 fail',
+    expect: /没提「退款」/,
+    run: () => runCheckout({ agreeCopy: '我已阅读并同意相关条款' }),
+  },
+  {
+    name: 'checkout / ★★ 没勾「已阅读」也能提交（闸门形同虚设）→ 必须 fail',
+    expect: /却是可点的/,
+    run: () => runCheckout({ submitNeverDisabled: true }),
+  },
+  {
+    name: 'checkout / ★★ 勾了「已阅读」仍置灰（写死了谁也下不了单）→ 必须 fail',
+    expect: /仍置灰/,
+    run: () => runCheckout({ submitAlwaysDisabled: true }),
+  },
+  {
+    name: 'checkout / ★★ 点了提交但订单没落库 → 必须 fail',
+    expect: /订单总数|没真正落库/,
+    run: () => runCheckout({ submitWorks: false }),
+  },
+  {
+    name: 'checkout / ★提交后没落到支付结果页 → 必须 fail',
+    expect: /没落到支付结果页/,
+    run: () => runCheckout({ hopResult: '/pages/cart/index' }),
+  },
+  {
+    name: 'checkout / ★★ mock 支付没驱动结算（订单停在 created）→ 必须 fail',
+    expect: /支付没走完/,
+    run: () => runCheckout({ payWorks: false }),
+  },
+  {
+    name: 'checkout / ★后端已 paid 但结果页还在转圈（轮询没读回来）→ 必须 fail',
+    expect: /没显示「支付成功」/,
+    run: () => runCheckout({ resultTextOverride: '正在确认支付结果…' }),
+  },
+  {
+    name: 'checkout / ★下单后购物车没被清空 → 必须 fail',
+    expect: /下单后购物车还剩/,
+    run: () => runCheckout({ clearCartOnSubmit: false }),
   },
 ]
 

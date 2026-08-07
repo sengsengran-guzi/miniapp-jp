@@ -34,6 +34,8 @@ const props = withDefaults(defineProps<Props>(), {
   invalidText: '',
   minQty: 1,
   maxQty: 99,
+  readonly: false,
+  qtyText: '',
 })
 
 const emit = defineEmits<{
@@ -72,6 +74,17 @@ interface Props {
   minQty?: number
   /** 数量上限 */
   maxQty?: number
+  /**
+   * ★ 只读模式（下单确认页的商品清单，GZ-JP-204）：<b>不渲染</b>勾选框、数量步进器与删除，
+   * 数量改用 {@link qtyText} 静态展示。
+   *
+   * <p><b>默认 false</b> —— 购物车（GZ-JP-203）一行不用改，它的交互与 self-test 不受影响。
+   * 确认页没有「改数量 / 删除 / 改勾选」的语义：要改回购物车改，否则「确认页」这三个字就没意义了
+   * （客人在确认页改完数量，还要不要再确认一次？）。</p>
+   */
+  readonly?: boolean
+  /** 只读模式下右侧显示的数量文案（如 `×2`；由页面从 locale 拼，组件不绑死符号） */
+  qtyText?: string
 }
 
 /** 图片运行时加载失败（预签名 URL 1h 过期 / 网络失败）→ 回落占位块。 */
@@ -92,9 +105,9 @@ function onCheckTap() {
 </script>
 
 <template>
-  <view class="biz-cart-item" :class="{ 'is-invalid': invalid }">
-    <!-- 勾选框（失效态禁用） -->
-    <view class="biz-cart-item__check" @tap.stop="onCheckTap">
+  <view class="biz-cart-item" :class="{ 'is-invalid': invalid, 'is-readonly': readonly }">
+    <!-- 勾选框（失效态禁用；只读模式不渲染 —— 确认页没有再改勾选的语义） -->
+    <view v-if="!readonly" class="biz-cart-item__check" @tap.stop="onCheckTap">
       <view
         class="biz-cart-item__box"
         :class="{ 'is-on': checked && !invalid, 'is-off': invalid }"
@@ -134,7 +147,9 @@ function onCheckTap() {
         </view>
         <view v-else class="biz-cart-item__price-ph" />
 
-        <view class="biz-cart-item__ops">
+        <!-- ★ 只读：数量静态展示（×2），无 stepper 无删除 -->
+        <text v-if="readonly" class="biz-cart-item__qty-text">{{ qtyText }}</text>
+        <view v-else class="biz-cart-item__ops">
           <BizStepper
             v-if="!invalid"
             :model-value="qty"
@@ -300,5 +315,17 @@ function onCheckTap() {
   font-size: var(--c-fs-xs);
   color: var(--c-ink-3);
   padding: 6rpx 4rpx;
+}
+
+/* ── 只读模式（下单确认页清单）── */
+.biz-cart-item__qty-text {
+  font-size: var(--c-fs-sm);
+  color: var(--c-ink-2);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+/* 没有勾选框占位，行左侧直接从图开始 —— 清单比购物车更紧凑 */
+.is-readonly {
+  padding-left: var(--c-gap-card);
 }
 </style>

@@ -205,7 +205,7 @@ onLoad(() => {
 </script>
 
 <template>
-  <BizScreen>
+  <BizScreen class="jp-screen">
     <!-- 卡内布局统一放 .row 真实子节点（virtualHost 会丢 BizPanel host 上的外部 flex/padding，
          否则 label 与值竖向堆叠、无内边距 —— Kevin 走查）。label 左、值/控件右，整列对齐。 -->
     <!-- 头像 -->

@@ -86,7 +86,7 @@ function onBrowseOnly() {
 </script>
 
 <template>
-  <BizScreen>
+  <BizScreen class="jp-screen">
     <view class="login">
       <!-- 品牌卡 -->
       <BizPanel>
