@@ -16,6 +16,7 @@
  *
  * <p>ID 字段统一 string（跨层契约 #1）。金额单位统一<b>分</b>。</p>
  */
+import type { GzJpPageResult } from '@/api/gz-jp/event'
 import { http } from '@/http/http'
 
 /* ============================================================
@@ -28,19 +29,10 @@ export const ORDER_CONFIRM_ROUTE = '/pages/order/confirm'
 /** 支付结果页（本卡交付）。 */
 export const ORDER_RESULT_ROUTE = '/pages/order/result'
 
-/**
- * 订单详情页 —— <b>GZ-JP-205 交付，本卡不建</b>。
- *
- * <p>支付成功后跳这里（AC）。205 合并前 {@code navigateTo} 会 fail，
- * 调用方必须兜提示（<b>不能静默无反应</b>），别让客人以为点了个坏按钮。</p>
- */
+/** 订单详情页（GZ-JP-205 交付）。支付成功后跳这里。 */
 export const ORDER_DETAIL_ROUTE = '/pages/order/detail'
 
-/**
- * 我的订单列表页 —— <b>GZ-JP-205 交付，本卡不建</b>。
- *
- * <p>支付失败 / 取消后回这里的「待支付」tab（AC）。tab 参数用 {@link ORDER_LIST_TAB_UNPAID}。</p>
- */
+/** 我的订单列表页（GZ-JP-205 交付）。支付失败 / 取消后回这里的「待支付」tab。 */
 export const ORDER_LIST_ROUTE = '/pages/order/list'
 
 /**
@@ -60,12 +52,12 @@ export function buildOrderConfirmRoute(cartItemIds: readonly string[]): string {
   return `${ORDER_CONFIRM_ROUTE}?ids=${encodeURIComponent(list.join(','))}`
 }
 
-/** 拼订单详情页路由（205 未上线期间会 fail，调用方兜提示）。 */
+/** 拼订单详情页路由。 */
 export function buildOrderDetailRoute(orderId: string): string {
   return `${ORDER_DETAIL_ROUTE}?id=${encodeURIComponent(String(orderId))}`
 }
 
-/** 拼订单列表页「待支付」tab 路由（205 未上线期间会 fail，调用方兜提示）。 */
+/** 拼订单列表页路由（默认落「待支付」tab）。 */
 export function buildOrderListRoute(tab: string = ORDER_LIST_TAB_UNPAID): string {
   return `${ORDER_LIST_ROUTE}?tab=${encodeURIComponent(tab)}`
 }
@@ -265,5 +257,65 @@ export function fetchJpOrderDetail(orderId: string): Promise<GzJpOrderDetailVO> 
     // 结果页轮询期间 404/4105 由页面自己兜（每 2 秒弹一次 toast 会刷屏）
     hideErrorToast: true,
     rawBizError: true,
+  })
+}
+
+/* ============================================================
+ * 5. 我的订单分页（GZ-JP-205）
+ * ============================================================ */
+
+/**
+ * 订单列表卡（后端 {@code GzJpOrderListItemVO}）。
+ *
+ * <p><b>★ 列表不下发商品行</b>：一单可能 30 款，列表页既渲染不了也不需要。
+ * 逐款履约进度要点进详情（{@link fetchJpOrderDetail}）。</p>
+ */
+export interface GzJpOrderListItemVO {
+  id: string
+  orderNo: string
+  /** 实付（<b>分</b>），★ 无运费 */
+  totalAmountCent: number
+  businessStatus: string
+  businessStatusLabel: string
+  /** 款数（行数） */
+  itemCount: number
+  /** 总件数（Σ qty） */
+  totalQty: number
+  /** 前 N 张商品缩略图（后端保证非 null；无图时是一个 mp 侧并不存在的占位路径） */
+  thumbUrls: string[]
+  createTime: string | null
+  paidTime: string | null
+}
+
+/** 列表每页条数（一屏能滚完、又不至于让「加载更多」点太多次）。 */
+export const ORDER_LIST_PAGE_SIZE = 10
+
+/**
+ * GET /app/gz/jp/order/list — 我的订单分页（<b>需登录</b>，下单时间倒序）。
+ *
+ * <p><b>★ 读 {@code res.rows} 不是 {@code res.data}</b>：分页端点直返
+ * {@code TableDataInfo}（无 {@code data} 字段）。{@code http.ts} 已识别这一形态并直返整对象，
+ * 所以这里的返回类型是 {@link GzJpPageResult} 而不是数组 —— D16 逮到过 6 处「把 rows 写成
+ * data 导致列表恒空」的前端契约 bug，本域从类型上就不给写错的机会。</p>
+ *
+ * @param params.businessStatus 订单状态过滤（不传 = 全部）。★ 取后端状态原值，中间不加映射表
+ */
+export function fetchJpOrderList(params: {
+  pageNum?: number
+  pageSize?: number
+  businessStatus?: string
+} = {}): Promise<GzJpPageResult<GzJpOrderListItemVO>> {
+  const query: Record<string, string | number> = {
+    pageNum: params.pageNum ?? 1,
+    pageSize: params.pageSize ?? ORDER_LIST_PAGE_SIZE,
+  }
+  const status = String(params.businessStatus ?? '').trim()
+  if (status) {
+    query.businessStatus = status
+  }
+  return http<GzJpPageResult<GzJpOrderListItemVO>>({
+    url: '/app/gz/jp/order/list',
+    method: 'GET',
+    query,
   })
 }

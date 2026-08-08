@@ -53,6 +53,11 @@ const PAGES = [
   // GZ-JP-204 支付结果：不带 orderId ⇒ 不轮询，停在「正在确认支付结果」转圈态（BizState）。
   // 标志元素取根容器 .jp-payres（四个阶段都渲染它）。
   { path: '/pages/order/result', accept: ['pages/order/result'], must: '.jp-payres' },
+  // GZ-JP-205 订单列表：游客态命中「登录后查看订单」空态，登录态命中列表；两态都渲染根容器
+  // .jp-odl（含 tab 条），所以标志元素取它。深度断言（分组 / 单号去重 / 退款文案）在 orders flow。
+  { path: '/pages/order/list', accept: ['pages/order/list'], must: '.jp-odl' },
+  // GZ-JP-205 订单详情：smoke 不带 id ⇒ 命中「订单不存在」空态，锁的是「直达不白屏不崩」。
+  { path: '/pages/order/detail', accept: ['pages/order/detail'], must: '.jp-odt' },
 ]
 const MIN_VIEWS = 3
 

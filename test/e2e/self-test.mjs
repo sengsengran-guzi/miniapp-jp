@@ -284,6 +284,10 @@ const ALL_PAGES = {
   // GZ-JP-204 新增两页。★ smoke 不带 ids ⇒ 空态；不带 orderId ⇒ 轮询态，都只有两层页面级壳
   'pages/order/confirm': { views: 2, viewsDeep: 9, els: { '.jp-confirm': {} } },
   'pages/order/result': { views: 2, viewsDeep: 9, els: { '.jp-payres': {} } },
+  // GZ-JP-205 新增两页。★ 同样是两层页面级壳：list 游客态命中「登录后查看订单」空态、
+  // detail 不带 id 命中「订单不存在」空态，内容都在 BizPanel/BizState 组件里
+  'pages/order/list': { views: 2, viewsDeep: 9, els: { '.jp-odl': {} } },
+  'pages/order/detail': { views: 2, viewsDeep: 9, els: { '.jp-odt': {} } },
 }
 
 /** smoke 用：按路径查表，路径原样落地（无重定向）。 */

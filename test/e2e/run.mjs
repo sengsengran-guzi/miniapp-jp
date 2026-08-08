@@ -46,6 +46,7 @@ const FLOWS = {
   product: () => import('./flows/product.mjs'),
   cart: () => import('./flows/cart.mjs'),
   checkout: () => import('./flows/checkout.mjs'),
+  orders: () => import('./flows/orders.mjs'),
 }
 
 /**

@@ -147,6 +147,98 @@ const orderZhCN = {
   /* ── 目标页尚未上线的兜底（GZ-JP-205 交付前）── */
   orderDetailComingSoon: '订单详情页即将上线，可在「我的订单」查看',
   orderListComingSoon: '「我的订单」即将上线',
+
+  /* ══════════════════════════════════════════════
+   * GZ-JP-205 我的订单列表（UI:mp.order_list）
+   * ══════════════════════════════════════════════ */
+  listTitle: '我的订单',
+
+  /** 四个 tab（与 list.logic.ts 的 ORDER_TABS labelKey 一一对应） */
+  tabAll: '全部',
+  tabUnpaid: '待支付',
+  tabOngoing: '进行中',
+  tabDone: '已完成',
+
+  listLoading: '正在加载订单…',
+  listEmpty: '还没有订单',
+  listEmptySub: '去逛逛正在拼的场次吧',
+  listEmptyCta: '去看看',
+  listError: '订单加载失败',
+  listErrorSub: '检查网络后重试',
+  listErrorCta: '重试',
+  listNeedLogin: '登录后查看我的订单',
+  listNeedLoginSub: '订单跟着你的微信号走',
+  listNeedLoginCta: '微信登录',
+
+  /** 卡片：订单号前缀 / 款数 / 件数 / 实付 */
+  cardOrderNoPrefix: '订单号 ',
+  cardItemCountPrefix: '共 ',
+  cardItemCountSuffix: ' 款',
+  cardTotalQtyPrefix: '·',
+  cardTotalQtySuffix: ' 件',
+  cardPayLabel: '实付',
+  /** 缩略图排后面的「+N」 */
+  cardMorePrefix: '+',
+
+  /** 分页 */
+  listLoadMore: '加载更多',
+  listLoadingMore: '加载中…',
+  listNoMore: '没有更多了',
+
+  /* ══════════════════════════════════════════════
+   * GZ-JP-205 订单详情（UI:mp.order_detail）
+   * ══════════════════════════════════════════════ */
+  detailTitle: '订单详情',
+
+  detailLoading: '正在加载…',
+  detailError: '订单加载失败',
+  detailErrorSub: '检查网络后重试',
+  detailErrorCta: '重试',
+  detailNotFound: '找不到这张订单',
+  detailNotFoundSub: '可能已被删除，或不属于当前账号',
+  detailNotFoundCta: '去我的订单',
+
+  /** 订单头 */
+  detailStatusLabel: '订单状态',
+  detailOrderNoLabel: '订单号',
+  detailCreateTimeLabel: '下单时间',
+  detailPaidTimeLabel: '支付时间',
+  detailAmountLabel: '实付',
+  detailQtyLabel: '共',
+  detailQtySuffix: '件',
+
+  /** 收货地址 */
+  detailAddressTitle: '收货地址',
+
+  /** 备注 */
+  detailNoteTitle: '订单备注',
+
+  /* ── ★ 按履约状态分组（UI:mp.order_detail.status_group）── */
+  detailItemsTitle: '商品进度',
+  /** 组头「<状态> N 款」的单位 */
+  groupUnit: '款',
+  /**
+   * ★ 已发货组组头下方的物流行 —— 快递中文名 + 运单号 + 复制。
+   * 同一运单号只出现一次（分组保证，不靠模板去重）。
+   */
+  trackingLabel: '运单号',
+  trackingCopy: '复制',
+  trackingCopied: '运单号已复制',
+  /** 拿不到快递中文名时（未知编码）物流行左侧的兜底词 */
+  trackingCarrierFallback: '快递',
+
+  /* ── 购买失败组的退款文案（GZ-JP-107 口径）── */
+  /** ★ 已退款：显示金额 */
+  refundRefundedPrefix: '已退款 ',
+  /** ★ 退款中 / 退款失败：一律「退款处理中」，不显示金额、不出现「失败」二字 */
+  refundProcessing: '退款处理中',
+  /** refund_failed 时多给一句出口（客人不知道该找谁时最慌） */
+  refundContactSupport: '如有疑问请联系客服',
+  /** 购买失败组的组内说明（甲方口径：没抢到是常态，不是事故） */
+  failedGroupTip: '这些商品没能抢到，货款按实付金额原路退回',
+
+  /** 行内数量（复用 qtyPrefix「×」） */
+  detailItemQtyPrefix: '×',
 } as const
 
 export type OrderMessageKey = keyof typeof orderZhCN
