@@ -5,6 +5,7 @@
  * 两个小程序（miniapp / miniapp-jp）的 E2E 也必须**互相串行**，不能同时开跑。
  *
  * 退出码：0 全过 / 1 有 flow 断言失败 / 2 preflight 或 launch 失败 / 3 硬超时。
+ * 兜底超时 = flow 数 × 240s（`MP_E2E_TIMEOUT_MS` 可覆盖整轮预算）。
  * 硬 gate「无降级」：preflight 不过直接退 2，不偷偷降级放过。
  */
 import path from 'node:path'
@@ -92,28 +93,45 @@ async function main() {
 
   await preflight({ dist })
 
-  const hardTimer = setTimeout(() => { console.error('=== HARD TIMEOUT 240s ==='); process.exit(3) }, 240000)
+  // 兜底超时按 flow 数量摊，别用一个固定值卡整轮：240s 是照「单个 flow」定的，
+  // 跑 `all`（7 个 flow）时最后一个必被这把刀砍掉 —— 报出来是 flow 挂了，其实是预算用完，
+  // 最能误导人的一类假红。单 flow 仍是 240s，只是整轮按个数放大。
+  const budgetMs = Number(process.env.MP_E2E_TIMEOUT_MS || 0) || names.length * 240000
+  const hardTimer = setTimeout(() => {
+    console.error(`=== HARD TIMEOUT ${Math.round(budgetMs / 1000)}s（${names.length} 个 flow 的总预算）===`)
+    process.exit(3)
+  }, budgetMs)
   let mp
   try {
-    console.log(`[run] launch automation  dist=${dist}`)
-    mp = await launchWithRetry(dist)
-    console.log('[run] ✓ automation launched')
-
-    // 硬 gate：小程序自己能不能打到本地后端（preflight 那条是 node 用 curl 探的，
-    // 探不出 devtools 的「不校验合法域名」开关关着 —— 那会让所有 flow 以「登录失败 /
-    // 页面停在 loading」的面目挂掉，看着像代码 bug）
-    await assertBackendReachableFromMp(mp)
-    console.log('[run] ✓ 小程序侧 wx.request 能打到本地后端（域名校验已放开）')
-
     let failures = 0
     for (const name of names) {
       console.log(`\n=== flow: ${name} ===`)
       const mod = await FLOWS[name]()
+
+      // ★ 每个 flow 独占一个全新 automator 会话，跑完就断。
+      //
+      // 为什么不复用一个长会话（实测教训）：单跑每个 flow 都绿，7 个串在一个会话里跑却
+      // **逐个往下烂** —— 先是深层页查不到元素，到后面连首页的场卡都查不出来，而同一时刻
+      // 后端 curl 一切正常。devtools 自动化是**共享单例**，长会话里 webview / 页面栈 /
+      // 存储会累积到不可信。这种假红最坑：它长得跟真 bug 一模一样，会把人送去查根本没坏的业务代码。
+      // 重连一次约 10-20s，换掉「7 个 flow 有 4 个说不清为什么红」很值。
+      console.log(`[run] launch automation  dist=${dist}`)
+      mp = await launchWithRetry(dist)
+      console.log('[run] ✓ automation launched')
+
+      // 硬 gate：小程序自己能不能打到本地后端（preflight 那条是 node 用 curl 探的，
+      // 探不出 devtools 的「不校验合法域名」开关关着 —— 那会让所有 flow 以「登录失败 /
+      // 页面停在 loading」的面目挂掉，看着像代码 bug）
+      await assertBackendReachableFromMp(mp)
+      console.log('[run] ✓ 小程序侧 wx.request 能打到本地后端（域名校验已放开）')
+
       try { await mod.run(mp); console.log(`[PASS] ${name}`) }
       catch (e) { failures++; console.error(`[FAIL] ${name}: ${e.message}`) }
+
+      await safeDisconnect(mp)
+      mp = null
     }
 
-    await safeDisconnect(mp)
     clearTimeout(hardTimer)
     console.log(`\n[run] 结束：${names.length - failures}/${names.length} flow 通过`)
     process.exit(failures ? 1 : 0)

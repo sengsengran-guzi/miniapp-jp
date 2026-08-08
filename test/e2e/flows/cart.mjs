@@ -25,7 +25,7 @@
  */
 import { execSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
-import { deep, deepTexts, gotoPage, loginIfNeeded, readAppToken, screenshot, sleep, SHOT_DIR } from '../mp-e2e.mjs'
+import { deep, deepWait, deepTexts, gotoPage, loginIfNeeded, readAppToken, screenshot, sleep, SHOT_DIR } from '../mp-e2e.mjs'
 
 /** 后端地址（与 preflight / dist 的 VITE_SERVER_BASEURL 一致）。 */
 const BACKEND = process.env.MP_BACKEND || 'http://localhost:8080'
@@ -183,7 +183,7 @@ export async function runWith(mp, { event, product, readCart, clearCart }) {
 
   const home = await gotoPage(mp, '/pages/index/index', 2500)
   // ★ 场卡 / 商品卡是自定义组件（BizEventCard / BizProductCard）→ deep()，page.$ 恒为 null
-  const eventCard = await deep(home, '.jp-event-card')
+  const eventCard = await deepWait(home, '.jp-event-card')
   if (!eventCard) throw new Error('首页没有场卡 .jp-event-card —— 第 1 跳的入口不存在（先看 home flow）')
   await eventCard.tap()
   await sleep(2500)
@@ -192,7 +192,7 @@ export async function runWith(mp, { event, product, readCart, clearCart }) {
   if (eventPage?.path !== 'pages/event/index') {
     throw new Error(`第 1 跳失败：点首页场卡后落在 ${JSON.stringify(eventPage?.path)}，期望 "pages/event/index"`)
   }
-  const productCard = await deep(eventPage, '.jp-product-card')
+  const productCard = await deepWait(eventPage, '.jp-product-card')
   if (!productCard) throw new Error('场详情没有商品卡 .jp-product-card —— 第 2 跳的入口不存在')
   await productCard.tap()
   await sleep(2500)
@@ -346,6 +346,17 @@ export async function runWith(mp, { event, product, readCart, clearCart }) {
     await plus.tap()
     await sleep(QTY_SETTLE_MS)
     await screenshot(mp, `${SHOT_DIR}/cart_3_qty.png`)
+
+    // ★ 先确认人还在购物车：mp 的原生 tap 会穿过自定义组件边界冒泡，「＋」一旦不 catchtap
+    // 就会连带触发整行的「跳商品详情」。那时数量其实改对了、库也落了，页面断言却全查空，
+    // 报出来是「合计没刷新」——症状离病因很远。这条先钉住，后面的失败才读得懂。
+    const pathAfterQty = (await mp.currentPage()).path
+    if (!pathAfterQty.includes('pages/cart/index')) {
+      fails.push(
+        `★ 点「＋」改数量把人带离了购物车：当前页=${pathAfterQty}（期望停在 pages/cart/index）`
+        + ` —— BizStepper 的加减按钮必须 @tap.stop，否则 tap 冒泡到 BizCartItem 的行点击`,
+      )
+    }
 
     const afterQty = readCart()
     const row = afterQty.groups[0]?.items?.[0]

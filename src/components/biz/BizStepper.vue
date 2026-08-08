@@ -15,6 +15,12 @@
  * 必须 {@code type="digit"} + 提交前显式 cast，别用 {@code type="number"}。</p>
  *
  * <p>值的合法性由调用方用 {@code clampQuantity} 收敛；本组件只负责不越界地 emit。</p>
+ *
+ * <p><b>加减按钮必须 {@code @tap.stop}（编译成 mp 的 catchtap），别改回 {@code @tap}</b>：
+ * mp 里原生 tap 会<b>穿过自定义组件边界</b>往上冒泡，而调用方常把整行包成可点区
+ * （购物车行 {@code <BizCartItem @tap="跳商品详情">}）。不 stop 的话点「＋」会在改数量的同时
+ * 触发行点击跳走 —— 数量确实改了但人已经离开购物车，表现像「合计不刷新」。
+ * 禁用态（{@code is-off}）也要 stop：灰按钮更不该把人带去别的页。</p>
  */
 import { computed } from 'vue'
 
@@ -61,7 +67,7 @@ function onPlus() {
     <view
       class="biz-stepper__btn biz-stepper__minus"
       :class="{ 'is-off': !canMinus }"
-      @tap="onMinus"
+      @tap.stop="onMinus"
     >
       <text class="biz-stepper__sign">−</text>
     </view>
@@ -69,7 +75,7 @@ function onPlus() {
     <view
       class="biz-stepper__btn biz-stepper__plus"
       :class="{ 'is-off': !canPlus }"
-      @tap="onPlus"
+      @tap.stop="onPlus"
     >
       <text class="biz-stepper__sign">＋</text>
     </view>

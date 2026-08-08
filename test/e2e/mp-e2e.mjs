@@ -245,6 +245,26 @@ export function deep(page, selector) {
 }
 
 /**
+ * 跨组件查单个元素，<b>轮询等它出现</b>；超时仍未命中 → null。
+ *
+ * <p>用在「跳过去之后等一个由接口驱动的元素」这类地方。固定 {@code sleep(2500)} 那种写法
+ * 是把网络往返赌在一个常数上：页面模板里商品卡挂在 {@code v-else}（loading / failed / 空
+ * 三个分支之后），接口慢一点就查空，报出来是「没有商品卡」，看着像功能坏了其实只是慢。
+ * 轮询不会放宽任何断言 —— 命中就立刻返回，等不到照样是 null 照样失败。</p>
+ *
+ * @param timeoutMs 最长等多久（默认 10s；本地起冷缓存的第一跳最慢）
+ */
+export async function deepWait(page, selector, timeoutMs = 10000, intervalMs = 400) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const el = await deep(page, selector)
+    if (el) return el
+    if (Date.now() >= deadline) return null
+    await sleep(intervalMs)
+  }
+}
+
+/**
  * 跨组件查一组元素（未命中返回 `[]`，不抛）。
  *
  * @param limit 最多取几个（下标逐个取，每个一次 RPC；默认 {@link XPATH_SCAN_LIMIT}）。

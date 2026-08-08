@@ -135,7 +135,7 @@ export async function runWith(mp, backend) {
   if (!(await deep(listPage, '.jp-odl'))) {
     throw new Error('订单列表页缺标志元素 .jp-odl（页面没渲染出来）')
   }
-  await screenshot(mp, 'orders-list.png')
+  await screenshot(mp, `${SHOT_DIR}/orders-list.png`)
 
   // ★ 卡片单号来自后端真数据
   const cardNos = await deepTexts(listPage, '.jp-odl__no')
@@ -172,7 +172,7 @@ export async function runWith(mp, backend) {
   if (!(await deep(detailPage, '.jp-odt'))) {
     throw new Error('订单详情页缺标志元素 .jp-odt')
   }
-  await screenshot(mp, 'orders-detail.png')
+  await screenshot(mp, `${SHOT_DIR}/orders-detail.png`)
   console.log(`  ✓ 两跳可达订单详情（订单 ${detail.orderNo}）`)
 
   /* ── 3. ★ 同一运单号只出现一次 ──────────────────────────── */

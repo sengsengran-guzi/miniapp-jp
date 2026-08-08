@@ -23,7 +23,7 @@
  */
 import { execSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
-import { deep, deepTexts, gotoPage, screenshot, sleep, SHOT_DIR } from '../mp-e2e.mjs'
+import { deep, deepWait, deepTexts, gotoPage, screenshot, sleep, SHOT_DIR } from '../mp-e2e.mjs'
 
 /** 后端地址（与 preflight / dist 的 VITE_SERVER_BASEURL 一致）。 */
 const BACKEND = process.env.MP_BACKEND || 'http://localhost:8080'
@@ -138,7 +138,7 @@ export async function runWith(mp, { event, products, detail }) {
   // ★ 场卡 / 商品卡都是自定义组件（BizEventCard / BizProductCard）→ 一律 deep()：
   //   page.$('.jp-event-card') 恒为 null（SelectorQuery 不跨组件边界），
   //   下面「点第一张卡」的两跳会以「入口不存在」的面目挂掉，看着像页面没渲染。
-  const eventCard = await deep(home, '.jp-event-card')
+  const eventCard = await deepWait(home, '.jp-event-card')
   if (!eventCard) {
     throw new Error('首页没有场卡 .jp-event-card —— 第 1 跳的入口不存在（先看 home flow）')
   }
@@ -201,7 +201,7 @@ export async function runWith(mp, { event, products, detail }) {
 
   /* ═══ 第 2 跳：场详情 → 商品详情 ═══════════════════════ */
 
-  const productCard = await deep(eventPage, '.jp-product-card')
+  const productCard = await deepWait(eventPage, '.jp-product-card')
   if (!productCard) {
     throw new Error('场详情没有商品卡 .jp-product-card —— 第 2 跳的入口不存在')
   }
