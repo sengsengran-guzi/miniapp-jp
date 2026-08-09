@@ -24,17 +24,53 @@ import { buildDist } from './build-dist.mjs'
  * appid 刚被改写、工程刚被 close 过都会触发）：IDE 还在重建 webview，automator 拿到一个
  * 空的 page meta。**它与被测代码无关**，重来一次就好 —— 不重试的话每次改完代码的第一跑
  * 都会红，久了就没人信这个 gate 了。</p>
+ *
+ * <p><b>光重试 launch 不够</b>：连上之后 webview 可能还在重建，第一次 `currentPage()` 照样抛
+ * 同一个 rawPath —— 那时错误发生在 flow 里，报出来是「[FAIL] cart: ...rawPath」，
+ * 长得跟业务断言失败一模一样。所以连上后再<b>探一次就绪</b>，探不动就整个重连。
+ * （跑 `all` 时每个 flow 各连一次，7 次里撞上一次的概率不低 —— 实测 6/7、5/7 两次都是栽在这。）</p>
  */
+const LAUNCH_ATTEMPTS = 3
+const READY_PROBES = 6
+
+function isRawPathTransient(e) {
+  return /rawPath|getPageMetaByWebviewId/.test((e && e.message) || '')
+}
+
+/** 连上之后探到 currentPage() 能用为止；一直是 rawPath 瞬态就返回 false 让外层重连。 */
+async function probeReady(mp) {
+  for (let i = 1; i <= READY_PROBES; i++) {
+    try {
+      const page = await mp.currentPage()
+      if (page) return true
+    }
+    catch (e) {
+      if (!isRawPathTransient(e)) throw e
+    }
+    await sleep(2000)
+  }
+  return false
+}
+
 async function launchWithRetry(dist) {
-  try {
-    return await launch({ projectPath: dist })
+  let last
+  for (let i = 1; i <= LAUNCH_ATTEMPTS; i++) {
+    let mp = null
+    try {
+      mp = await launch({ projectPath: dist })
+      if (await probeReady(mp)) return mp
+      console.log(`[run] devtools webview 还没重建好（第 ${i}/${LAUNCH_ATTEMPTS} 次）→ 断开重连`)
+      await safeDisconnect(mp)
+    }
+    catch (e) {
+      last = e
+      await safeDisconnect(mp)
+      if (!isRawPathTransient(e)) throw e
+      console.log(`[run] devtools 重建工程中（rawPath 瞬态，第 ${i}/${LAUNCH_ATTEMPTS} 次）`)
+    }
+    await sleep(8000)
   }
-  catch (e) {
-    if (!/rawPath|getPageMetaByWebviewId/.test(e.message || '')) throw e
-    console.log('[run] devtools 重建工程中（rawPath 瞬态）→ 5 秒后重试一次')
-    await sleep(5000)
-    return launch({ projectPath: dist })
-  }
+  throw last || new Error('devtools 连了 3 次都没就绪（rawPath 瞬态一直不退）')
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
