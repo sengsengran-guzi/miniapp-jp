@@ -37,6 +37,35 @@ function isRawPathTransient(e) {
   return /rawPath|getPageMetaByWebviewId/.test((e && e.message) || '')
 }
 
+/**
+ * 「等 automator 响应超时」也算可重试的瞬态。
+ *
+ * <p>它跟 rawPath 是同一类病（devtools 自动化是共享单例，长会话里会累积到不可信），
+ * 但**不匹配** {@link isRawPathTransient} 的正则 —— 于是原来会走
+ * {@code if (!isRawPathTransient(e)) throw e} 直接把整轮抛掉，
+ * <b>三次重试一次都没参与</b>。实测：连跑十几个 flow 之后 checkout 稳定卡在
+ * launch 阶段，单独重跑照样卡，清掉孤儿进程后立刻就过。</p>
+ */
+function isAutomatorTimeout(e) {
+  return /timeout waiting for automator|automator response/i.test((e && e.message) || '')
+}
+
+/**
+ * 回收上一轮遗留的 devtools CLI 子进程。
+ *
+ * <p>真因就在这里：每次 launch 会拉起 {@code cli -o} 之类的 helper，异常退出时它不一定被收走，
+ * 而它**占着自动化通道** —— 下一次 launch 于是一直等不到响应。不清它，重试多少次都是白搭。</p>
+ *
+ * <p><b>只杀 CLI helper，绝不碰开发者工具本体</b>（Electron 主进程）：本体在无头 shell 里
+ * 起不回来，杀了整台机器的 mp 测试就全停了。</p>
+ */
+function reapOrphanCli() {
+  try {
+    execSync('pkill -f "cli -o" 2>/dev/null || true', { stdio: 'ignore' })
+  }
+  catch { /* pkill 没匹配到会返回非 0，属正常 */ }
+}
+
 /** 连上之后探到 currentPage() 能用为止；一直是 rawPath 瞬态就返回 false 让外层重连。 */
 async function probeReady(mp) {
   for (let i = 1; i <= READY_PROBES; i++) {
@@ -65,8 +94,16 @@ async function launchWithRetry(dist) {
     catch (e) {
       last = e
       await safeDisconnect(mp)
-      if (!isRawPathTransient(e)) throw e
-      console.log(`[run] devtools 重建工程中（rawPath 瞬态，第 ${i}/${LAUNCH_ATTEMPTS} 次）`)
+      if (!isRawPathTransient(e) && !isAutomatorTimeout(e)) throw e
+      if (isAutomatorTimeout(e)) {
+        // 等不到响应基本都是上一轮的 cli helper 没被收走、占着自动化通道。
+        // 不清它就重连 = 白重连三次然后报同一个错。
+        reapOrphanCli()
+        console.log(`[run] automator 无响应 → 已回收孤儿 cli 进程，重连（第 ${i}/${LAUNCH_ATTEMPTS} 次）`)
+      }
+      else {
+        console.log(`[run] devtools 重建工程中（rawPath 瞬态，第 ${i}/${LAUNCH_ATTEMPTS} 次）`)
+      }
     }
     await sleep(8000)
   }

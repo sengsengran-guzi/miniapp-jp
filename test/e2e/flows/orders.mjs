@@ -194,9 +194,58 @@ export async function runWith(mp, backend) {
       throw new Error(`后端有运单号 ${t}，详情页却没显示（页面=${JSON.stringify([...uniq])}）`)
     }
   }
-  console.log(
-    `  ✓ ★ 同一运单号只出现一次：页面 ${uniq.size} 个单号 / 后端 ${expectedUniq.size} 个（去重前 ${shownTrackings.length}）`,
-  )
+  if (!expectedUniq.size) {
+    // ★ 反空转：这张单一个运单号都没有 ⇒ 上面那两条断言（去重 / 缺显）根本没执行到，
+    //   打成「✓ 页面 0 个 / 后端 0 个」会读起来像通过。必须显式说明它没验到东西。
+    console.log(
+      '  ⚠ 本轮挑中的订单没有任何已发货行 → 运单号去重与承运商名断言【未触发】（不是通过）。' +
+        '造一笔已发货的单再跑才能覆盖这段。',
+    )
+  } else {
+    console.log(
+      `  ✓ ★ 同一运单号只出现一次：页面 ${uniq.size} 个单号 / 后端 ${expectedUniq.size} 个（去重前 ${shownTrackings.length}）`,
+    )
+
+    /* ── 3b. ★ 承运商中文名 = 后端下发的 carrierLabel ─────────
+     * 这条守的是跨层契约：前端**不再**维护 code→中文名映射表，整串中文名由后端
+     * 读字典下发（GzJpOrderItemVO.carrierLabel）。字段名写错 / 序列化没带上 /
+     * 前端读错 key，任何一处断了都是「承运商名悄悄消失」—— 页面照常渲染、
+     * 单号照常在，两边的单测各自用夹具也都照样绿。只有拿真接口比对才照得出来。
+     */
+    const backendLabels = new Set(
+      (detail.items || [])
+        .filter((it) => String(it?.trackingNo ?? '').trim())
+        .map((it) => String(it?.carrierLabel ?? '').trim())
+        .filter(Boolean),
+    )
+    const shownCarriers = (await deepTexts(detailPage, '.jp-odt__tracking-carrier'))
+      .map((t) => String(t).trim())
+      .filter(Boolean)
+    for (const label of backendLabels) {
+      if (!shownCarriers.includes(label)) {
+        throw new Error(
+          `★ 后端 carrierLabel="${label}"，详情页组头却没显示它（页面=${JSON.stringify(shownCarriers)}）` +
+            ' —— 跨层契约断了（字段名/序列化/前端取值），或前端又退回了硬编码映射表',
+        )
+      }
+    }
+    // 后端给不出 label 时前端不许自造：页面上不能冒出原始编码（如 "sf"）
+    const rawCodes = new Set(
+      (detail.items || [])
+        .map((it) => String(it?.carrierCode ?? '').trim())
+        .filter(Boolean),
+    )
+    for (const code of rawCodes) {
+      if (shownCarriers.includes(code)) {
+        throw new Error(
+          `★ 详情页把承运商原始编码 "${code}" 当中文名显示了 —— 应显示后端 carrierLabel，取不到就留空只显单号`,
+        )
+      }
+    }
+    console.log(
+      `  ✓ ★ 承运商名来自后端 carrierLabel：${JSON.stringify([...backendLabels])}（页面=${JSON.stringify(shownCarriers)}，无原始编码泄漏）`,
+    )
+  }
 
   /* ── 4. 分组结构：组数 + 购买失败排最后 ─────────────────── */
   const groupTitles = (await deepTexts(detailPage, '.jp-odt__group-title'))
@@ -281,13 +330,25 @@ export async function run(mp) {
       '当前用户没有订单 —— 请先跑 checkout flow 或手工造一笔已支付订单再跑 orders。',
     )
   }
-  // 优先挑「行最多」的那张单验分组（更可能同时有多状态多单号）
+  // 挑哪张单来验，直接决定「运单号去重 + 承运商名」那几条断言是真跑还是空转。
+  // 排序口径：① 有已发货行（带运单号）的优先 —— 没有的话那几条断言一条都执行不到；
+  //          ② 其次行最多（更可能多状态多单号，分组逻辑压力更大）。
+  // 只看最新 5 张不够（新单往往还没发货），放宽到 12 张。
+  const shipped = (d) => (d?.items || []).filter((it) => String(it?.trackingNo ?? '').trim()).length
   let best = null
-  for (const o of orders.slice(0, 5)) {
+  for (const o of orders.slice(0, 12)) {
     const d = fetchOrderDetailFromBackend(o.id, token)
-    if (d && (!best || (d.items?.length ?? 0) > (best.items?.length ?? 0))) {
+    if (!d) continue
+    if (
+      !best ||
+      shipped(d) > shipped(best) ||
+      (shipped(d) === shipped(best) && (d.items?.length ?? 0) > (best.items?.length ?? 0))
+    ) {
       best = d
     }
+  }
+  if (best && !shipped(best)) {
+    console.log('  ⚠ 最近 12 张单里没有一张有已发货行 —— 运单号/承运商断言这轮会空转（见下方提示）')
   }
   await runWith(mp, { orders, detail: best })
 }
