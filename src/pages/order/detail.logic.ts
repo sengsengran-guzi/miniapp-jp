@@ -65,37 +65,19 @@ function rankOf(status: string): number {
  * ============================================================ */
 
 /**
- * 快递编码 → 中文名（字典 {@code gz_express_carrier} 的 9 项）。
+ * 取一行的快递中文名 —— <b>直接用后端下发的 {@code carrierLabel}</b>。
  *
- * <p><b>★ 这是本域唯一一处「前端映射表」，且是被迫的</b>：mp 的
- * {@code GzJpOrderItemVO} 只下发 {@code carrierCode}，<b>没有</b> carrierLabel
- * （对比 {@code fulfillStatusLabel} / {@code refundStatusLabel} 后端都给了）。
- * 与其让客人看到「sf SF7654321000」，不如先在前端映射；
- * <b>正解是后端 VO 补一个 carrierLabel 字段</b>，补上后删掉本表（见完工报告「对下游」）。</p>
+ * <p><b>★ 前端不维护快递编码 → 中文名的映射表</b>：真源是后台字典
+ * {@code gz_express_carrier}，后端读它填 {@code carrierLabel} 一并下发
+ * （与 {@code fulfillStatusLabel} / {@code refundStatusLabel} 同一条纪律）。
+ * 前端若自己再存一份，后台加一个承运商前端就显示空 —— 那是第二份真源。</p>
  *
- * <p>未知编码<b>不猜也不显示原始编码</b> —— 见 {@link carrierNameOf}。</p>
- */
-const CARRIER_NAMES: Readonly<Record<string, string>> = {
-  yto: '圆通速递',
-  sf: '顺丰速运',
-  zto: '中通快递',
-  yunda: '韵达速递',
-  jd: '京东快递',
-  ems: 'EMS',
-  debang: '德邦',
-  jitu: '极兔速递',
-  other: '快递',
-}
-
-/**
- * 快递中文名。
- *
- * <p>未知 / 空编码 → 返回空串（页面此时只显示运单号）。<b>刻意不回落成原始编码</b>：
+ * <p>后端在「未发货 / 编码不在字典里 / 字典整体不可用」三种情况下统一给 {@code null}，
+ * 这里一律折成空串，页面此时只显示运单号。<b>刻意不回落成 {@code carrierCode}</b>：
  * 「zzz SF123」比单独一个「SF123」更让客人困惑，而单号本身就够他去快递官网查了。</p>
  */
-export function carrierNameOf(carrierCode: string | null | undefined): string {
-  const code = String(carrierCode ?? '').trim().toLowerCase()
-  return CARRIER_NAMES[code] ?? ''
+function carrierLabelOf(item: GzJpOrderItemVO | null | undefined): string {
+  return String(item?.carrierLabel ?? '').trim()
 }
 
 /* ============================================================
@@ -192,7 +174,7 @@ export interface FulfillGroup {
   itemCount: number
   /** ★ 本组共用的运单号（组头显示一次；无则 null） */
   trackingNo: string | null
-  /** 快递中文名（未知编码 → 空串） */
+  /** 快递中文名 —— ★ 取后端 {@code carrierLabel}；后端给不出时为空串（页面只显示单号） */
   carrierName: string
   /** 是否购买失败组（页面据此渲染退款文案，不自己比状态字符串） */
   isFailed: boolean
@@ -231,7 +213,7 @@ export function groupItemsByFulfillStatus(
     return []
   }
 
-  /** key = `${status} ${trackingNo ?? ''}` ——   不可能出现在单号里，不怕拼接歧义 */
+  /** key = `${status}\u241F${trackingNo ?? ''}` —— U+241F(␟) 是纯分隔符，不会出现在状态或单号里，不怕拼接歧义 */
   const buckets = new Map<string, FulfillGroup>()
   // 记录每个 bucket 首次出现的位置，保证「同状态多单号」时子组顺序 = 后端行顺序
   const firstSeen = new Map<string, number>()
@@ -239,7 +221,7 @@ export function groupItemsByFulfillStatus(
   list.forEach((it, index) => {
     const status = String(it?.fulfillStatus ?? '').trim()
     const tracking = normalizeTracking(it?.trackingNo)
-    const key = `${status} ${tracking ?? ''}`
+    const key = `${status}\u241F${tracking ?? ''}`
 
     let g = buckets.get(key)
     if (!g) {
@@ -251,7 +233,7 @@ export function groupItemsByFulfillStatus(
         items: [],
         itemCount: 0,
         trackingNo: tracking,
-        carrierName: carrierNameOf(it?.carrierCode),
+        carrierName: carrierLabelOf(it),
         isFailed: status === FULFILL_PURCHASE_FAILED,
       }
       buckets.set(key, g)
@@ -259,9 +241,9 @@ export function groupItemsByFulfillStatus(
     }
     g.items.push(it)
     g.itemCount = g.items.length
-    // 组内先出现的行没带快递编码、后面的带了 → 补上（同单号的编码必然一致）
+    // 组内先出现的行没带快递名、后面的带了 → 补上（同单号的承运商必然一致）
     if (!g.carrierName) {
-      g.carrierName = carrierNameOf(it?.carrierCode)
+      g.carrierName = carrierLabelOf(it)
     }
   })
 

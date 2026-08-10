@@ -217,6 +217,13 @@ export interface GzJpOrderItemVO {
   /** ★ 履约状态中文（后端已给，别在前端再维护一份映射表） */
   fulfillStatusLabel: string
   carrierCode: string | null
+  /**
+   * ★ 快递中文名（后端查字典 {@code gz_express_carrier} 下发，前端别再维护第二份映射表）。
+   *
+   * <p>未发货 / 编码不在字典里 / 字典整体不可用时后端统一给 {@code null} ——
+   * 此时页面只显示运单号（组头自带兜底文案），不回落成原始编码。</p>
+   */
+  carrierLabel: string | null
   trackingNo: string | null
   shippedAt: string | null
   refundStatus: string | null

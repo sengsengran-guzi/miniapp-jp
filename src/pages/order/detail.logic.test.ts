@@ -10,7 +10,6 @@ import type { GzJpOrderItemVO } from '@/api/gz-jp/order'
  */
 import { describe, expect, it } from 'vitest'
 import {
-  carrierNameOf,
   FULFILL_GROUP_ORDER,
   FULFILL_PURCHASE_FAILED,
   groupHeaderText,
@@ -36,6 +35,7 @@ function item(over: Partial<GzJpOrderItemVO> & { id: string }): GzJpOrderItemVO 
     fulfillStatus: 'purchasing',
     fulfillStatusLabel: '购买中',
     carrierCode: null,
+    carrierLabel: null,
     trackingNo: null,
     shippedAt: null,
     refundStatus: null,
@@ -45,13 +45,28 @@ function item(over: Partial<GzJpOrderItemVO> & { id: string }): GzJpOrderItemVO 
   }
 }
 
-/** 已发货行（带单号）。 */
-function shipped(id: string, trackingNo: string, carrierCode = 'sf'): GzJpOrderItemVO {
+/**
+ * 后端会随行下发的快递中文名（<b>测试夹具，模拟后端读字典 gz_express_carrier 的结果</b>；
+ * 不是前端映射表 —— 生产代码里已经没有这样一张表了）。
+ */
+const BACKEND_CARRIER_LABEL: Readonly<Record<string, string>> = {
+  sf: '顺丰速运',
+  jd: '京东快递',
+}
+
+/** 已发货行（带单号 + 后端下发的 carrierLabel）。 */
+function shipped(
+  id: string,
+  trackingNo: string,
+  carrierCode = 'sf',
+  carrierLabel: string | null = BACKEND_CARRIER_LABEL[carrierCode] ?? null,
+): GzJpOrderItemVO {
   return item({
     id,
     fulfillStatus: 'delivered',
     fulfillStatusLabel: '发货完毕',
     carrierCode,
+    carrierLabel,
     trackingNo,
     shippedAt: '2026-08-07 10:05:23',
   })
@@ -247,30 +262,67 @@ describe('退款展示', () => {
  * 快递名 / 组头 / 路由 / 边界
  * ════════════════════════════════════════════════════════════ */
 
-describe('快递中文名', () => {
-  it('已知编码 → 中文名', () => {
-    expect(carrierNameOf('sf')).toBe('顺丰速运')
-    expect(carrierNameOf('jd')).toBe('京东快递')
-    expect(carrierNameOf('ems')).toBe('EMS')
+describe('快递中文名（★ 一律取后端 carrierLabel，前端不维护映射表）', () => {
+  it('组头快递名 = 后端下发的 carrierLabel', () => {
+    const [g] = groupItemsByFulfillStatus([shipped('1', 'SF7654321000', 'sf')])
+    expect(g.carrierName).toBe('顺丰速运')
   })
 
-  it('大小写与空格容错', () => {
-    expect(carrierNameOf(' SF ')).toBe('顺丰速运')
+  it('★ 后台字典新加的承运商（前端没见过的编码）照样显示 —— 这正是删掉硬编码表换来的', () => {
+    // 前端从不认识 'jitu2'，中文名完全由后端下发；旧的硬编码表在这里会显示空
+    const [g] = groupItemsByFulfillStatus([
+      shipped('1', 'JT888', 'jitu2', '极兔速递'),
+    ])
+    expect(g.carrierName).toBe('极兔速递')
   })
 
-  it('★ 未知 / 空编码 → 空串（不回落成原始编码，「zzz SF123」比「SF123」更让人困惑）', () => {
-    expect(carrierNameOf('zzz')).toBe('')
-    expect(carrierNameOf(null)).toBe('')
-    expect(carrierNameOf('')).toBe('')
+  it('★ 后端给不出中文名（未知编码 / 字典不可用 → carrierLabel=null）→ 空串，绝不回落成编码', () => {
+    // 「zzz_gone SF123」比单独一个「SF123」更让客人困惑
+    const [unknown] = groupItemsByFulfillStatus([shipped('1', 'SF123', 'zzz_gone', null)])
+    expect(unknown.carrierName).toBe('')
+    expect(unknown.carrierName).not.toBe('zzz_gone')
+    // 单号仍在（客人拿它自己去快递官网查件）
+    expect(unknown.trackingNo).toBe('SF123')
+
+    // 有编码但后端 label 是空串 / 全空格 → 同样折成空串
+    expect(groupItemsByFulfillStatus([shipped('2', 'SF124', 'sf', '')])[0].carrierName).toBe('')
+    expect(groupItemsByFulfillStatus([shipped('3', 'SF125', 'sf', '   ')])[0].carrierName).toBe('')
   })
 
-  it('组内先出现的行没带编码、后面的带了 → 组头仍能显示快递名', () => {
+  it('未发货行（carrierCode / carrierLabel 都为 null）→ 空串，不抛', () => {
+    const [g] = groupItemsByFulfillStatus([item({ id: '1' })])
+    expect(g.carrierName).toBe('')
+  })
+
+  it('组内先出现的行没带 label、后面的带了 → 组头仍能显示快递名', () => {
     const groups = groupItemsByFulfillStatus([
-      item({ id: '1', fulfillStatus: 'delivered', fulfillStatusLabel: '发货完毕', trackingNo: 'SF001', carrierCode: null }),
+      item({
+        id: '1',
+        fulfillStatus: 'delivered',
+        fulfillStatusLabel: '发货完毕',
+        trackingNo: 'SF001',
+        carrierCode: null,
+        carrierLabel: null,
+      }),
       shipped('2', 'SF001', 'sf'),
     ])
     expect(groups).toHaveLength(1)
     expect(groups[0].carrierName).toBe('顺丰速运')
+  })
+
+  it('★ 前端不再猜编码：只给 carrierCode 不给 carrierLabel 时组头必须是空串', () => {
+    // 守「映射表没被偷偷复活」——若有人再加一张 code→name 表，这条会红
+    const [g] = groupItemsByFulfillStatus([
+      item({
+        id: '1',
+        fulfillStatus: 'delivered',
+        fulfillStatusLabel: '发货完毕',
+        trackingNo: 'SF001',
+        carrierCode: 'sf',
+        carrierLabel: null,
+      }),
+    ])
+    expect(g.carrierName).toBe('')
   })
 })
 
