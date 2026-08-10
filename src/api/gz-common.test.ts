@@ -49,6 +49,17 @@ describe('fetchHomeBanners', () => {
     )
   })
 
+  // ★ 硬断字面量：本小程序的 banner 必须读自己那份 key，不能是谷子宇宙小程序的 gz.home.banners
+  //   （两个小程序共用同一后端 + 同一张 sys_config，共用 key = 后台配一次两边首页串味）
+  it('key 是拼团专属 gz.jp.home.banners（不与谷子宇宙小程序共用）', async () => {
+    expect(GZ_CONFIG_KEYS.HOME_BANNERS).toBe('gz.jp.home.banners')
+    httpMock.mockResolvedValueOnce('')
+    await fetchHomeBanners()
+    expect(httpMock).toHaveBeenCalledWith(
+      expect.objectContaining({ query: { key: 'gz.jp.home.banners' } }),
+    )
+  })
+
   it('正常 JSON 数组 → 解析出各项', async () => {
     httpMock.mockResolvedValueOnce(
       '[{"imageUrl":"https://oss/a.png","link":"/pages/index/index","enabled":true}]',

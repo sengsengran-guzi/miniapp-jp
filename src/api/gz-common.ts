@@ -14,13 +14,14 @@ import { http } from '@/http/http'
 /**
  * GZ sys_config 键常量（与 admin / DDL 严格一致）。
  *
- * ⚠️ 两个小程序共用同一后端 sys_config —— HOME_BANNERS 当前是与现有小程序**同一个 key**。
- * GZ-JP-201 落首页轮播时须先决定：拼团首页复用同一批 banner，还是后端另开
- * `gz.jp.home.banners` 独立 key（需 admin 侧同步配置项）。本脚手架不擅自新增后端未支持的 key。
+ * ⚠️ 两个小程序共用同一后端 + 同一张 sys_config 表，运营素材必须**各配一套**，
+ * 否则后台配一次两边首页串味。本小程序的首页轮播独立 key = `gz.jp.home.banners`
+ * （谷子宇宙小程序仍是 `gz.home.banners`，两者互不影响 — GZ-JP-201）。
+ * 后端 MpPublicConfigKeyResolver 还会按请求 header clientid 再归一一次（漏改常量也不会串味）。
  */
 export const GZ_CONFIG_KEYS = {
-  /** 首页轮播 banner（JSON 数组 [{imageUrl,link,enabled}]） */
-  HOME_BANNERS: 'gz.home.banners',
+  /** 拼团首页轮播 banner（JSON 数组 [{imageUrl,link,enabled}]） */
+  HOME_BANNERS: 'gz.jp.home.banners',
 } as const
 
 /**
