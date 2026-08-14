@@ -185,8 +185,21 @@ export function buildBannerSlides(banners: HomeBannerItem[] | null | undefined):
 /** 场详情页路由（GZ-JP-202 交付；本卡先按此约定拼参，202 上线即自然打通）。 */
 export const EVENT_DETAIL_ROUTE = '/pages/event/index'
 
-/** 订单列表页路由（GZ-JP-205 交付）。 */
-export const ORDER_LIST_ROUTE = '/pages/order/index'
+/**
+ * 订单列表页路由（GZ-JP-205 交付）。
+ *
+ * <p><b>★ 这个值必须和 {@code pages.json} 里注册的路径逐字相同</b>，由
+ * {@code index.logic.test.ts} 的「路由常量必须指向已注册页面」那条用例机器守着。</p>
+ *
+ * <p><b>踩过的坑</b>：本卡（201）比订单页（205）先落地，当时这里<b>按约定猜</b>了
+ * {@code '/pages/order/index'}；205 最终交付的是 {@code '/pages/order/list'}，没人回来改这一行。
+ * 于是首页那张「我的订单」卡片 {@code navigateTo} 恒失败，而 fail 回调把它吞成一句
+ * 「订单功能即将上线」—— <b>看起来像功能没做，其实是路由写错</b>，
+ * 客人付完款后再也回不到订单列表，一期最重的履约展示（六段状态 / 运单号 / 行级退款）
+ * 全成了不可达页面。E2E 也没照出来：它是 {@code gotoPage('/pages/order/list')} 程序化直达的，
+ * 证明了「页面能渲染」，从没证明「人点得到」。</p>
+ */
+export const ORDER_LIST_ROUTE = '/pages/order/list'
 
 /**
  * 拼场详情页路由。

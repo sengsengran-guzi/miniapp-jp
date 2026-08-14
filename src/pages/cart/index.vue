@@ -291,7 +291,10 @@ function onCheckout() {
   }
   uni.navigateTo({
     url: buildCheckoutRoute(checkoutIds(cart.value, selectedIds.value)),
-    fail: () => uni.showToast({ title: t('cart.checkoutComingSoon'), icon: 'none' }),
+    fail: (err) => {
+      console.error('[jp-cart] 结算页跳转失败（路由 bug）', err)
+      uni.showToast({ title: t('cart.checkoutOpenFailed'), icon: 'none' })
+    },
   })
 }
 

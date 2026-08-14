@@ -135,16 +135,20 @@ const displayOrderNo = computed(() => detail.value?.orderNo || orderNo.value)
  */
 const pollingText = computed(() => t('order.resultPolling'))
 
-/* ── 跳转（GZ-JP-205 未上线时兜 toast，绝不静默）───────── */
+/* ── 跳转（失败必须报错，绝不静默、也绝不谎称「没上线」）───────── */
 
 function goOrderDetail() {
   if (!orderId.value) {
-    uni.showToast({ title: t('order.orderDetailComingSoon'), icon: 'none' })
+    // 页面是有的，只是这次没接到单号 —— 给客人一条自己找得回去的路
+    uni.showToast({ title: t('order.orderIdMissing'), icon: 'none' })
     return
   }
   uni.navigateTo({
     url: buildOrderDetailRoute(orderId.value),
-    fail: () => uni.showToast({ title: t('order.orderDetailComingSoon'), icon: 'none' }),
+    fail: (err) => {
+      console.error('[jp-result] 订单详情跳转失败（路由 bug）', err)
+      uni.showToast({ title: t('order.orderOpenFailed'), icon: 'none' })
+    },
   })
 }
 
@@ -152,7 +156,10 @@ function goOrderDetail() {
 function goOrderList() {
   uni.navigateTo({
     url: buildOrderListRoute(),
-    fail: () => uni.showToast({ title: t('order.orderListComingSoon'), icon: 'none' }),
+    fail: (err) => {
+      console.error('[jp-result] 订单列表跳转失败（路由 bug）', err)
+      uni.showToast({ title: t('order.orderOpenFailed'), icon: 'none' })
+    },
   })
 }
 

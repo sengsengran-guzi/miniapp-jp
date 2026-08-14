@@ -17,6 +17,7 @@ import type { MeGridItem } from '@/components/biz/MeGrid.vue'
 import { onShow } from '@dcloudio/uni-app'
 import { computed, ref } from 'vue'
 import { CART_ROUTE } from '@/api/gz-jp/cart'
+import { ORDER_LIST_ROUTE } from '@/api/gz-jp/order'
 import { getMe } from '@/api/gz-user'
 import { useAuth } from '@/hooks/useAuth'
 import { t } from '@/locale/user.zh-CN'
@@ -42,26 +43,39 @@ const avatarUrl = computed(() => me.value?.avatarUrl ?? '')
 
 /**
  * 会员中心入口格。
- * GZ-JP-205 落订单页后在此加 { key: 'orders', icon: '🧾', label: t('user.home.entryOrders') }
- * 并在 ROUTE_MAP 补 orders 路由。
+ *
+ * <p><b>「我的订单」必须排第一，而且必须留在这里</b>：它是全小程序<b>唯一一条常驻</b>的
+ * 回订单路径。支付结果页会跳走、首页那张卡片是营销位随时可能改版，只有 tab 里这一格是稳的。
+ * 曾经这一格没接（只有购物车和关于），同期首页那张卡片的路由常量又写错，
+ * 结果客人付完款就再也回不到订单列表 —— 六段履约状态、运单号、行级退款全成了不可达页面。
+ * 详见 {@code src/pages.routes.test.ts} 的事故记录。</p>
  */
 const gridItems = computed<MeGridItem[]>(() => [
+  // 订单（GZ-JP-205）：放第一格 —— 熟客回小程序最高频的动作就是「看我的货到哪了」
+  { key: 'orders', icon: '🧾', label: t('user.home.entryOrders'), type: 'nav' },
   // 购物车（GZ-JP-203）：商品详情底部那个入口只在看商品时才有，这里是「随时能回去」的常驻入口
   { key: 'cart', icon: '🛒', label: t('user.home.entryCart'), type: 'nav' },
   { key: 'about', icon: 'ℹ️', label: t('user.home.entryAbout'), type: 'nav' },
 ])
 
-/** 入口格跳转目标（真实路由，无占位）。 */
+/**
+ * 入口格跳转目标（真实路由，无占位）。
+ *
+ * <p>路由值一律取各 api 模块导出的常量，<b>不在这里写字面量</b> ——
+ * 手写字面量正是订单入口那次事故的形态（猜了个 {@code /pages/order/index}，
+ * 页面根本没注册）。{@code pages.routes.test.ts} 会扫所有 {@code *_ROUTE} 常量对账。</p>
+ */
 const ROUTE_MAP: Record<string, string> = {
+  orders: ORDER_LIST_ROUTE,
   cart: CART_ROUTE,
   about: '/pages/me/about',
 }
 
 /**
  * 需登录才能进的入口 key（其余直接跳）。
- * 购物车是用户私有数据（后端四个端点都需登录）→ 游客点这里先弹协议同意 sheet 走微信登录。
+ * 购物车与订单都是用户私有数据（后端端点均需登录）→ 游客点这里先弹协议同意 sheet 走微信登录。
  */
-const LOGIN_REQUIRED_KEYS = new Set<string>(['cart'])
+const LOGIN_REQUIRED_KEYS = new Set<string>(['cart', 'orders'])
 
 async function loadMe() {
   if (!isLoggedIn()) {

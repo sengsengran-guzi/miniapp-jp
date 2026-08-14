@@ -324,11 +324,14 @@ function goCart() {
   })
 }
 
-/** 去「我的订单」（GZ-JP-205 交付；未上线时兜 toast，不静默无反应）。 */
+/** 去「我的订单」。跳转失败是路由 bug，必须报错，不许谎称「没上线」。 */
 function goOrderList() {
   uni.navigateTo({
     url: buildOrderListRoute(),
-    fail: () => uni.showToast({ title: t('order.orderListComingSoon'), icon: 'none' }),
+    fail: (err) => {
+      console.error('[jp-confirm] 订单列表跳转失败（路由 bug）', err)
+      uni.showToast({ title: t('order.orderOpenFailed'), icon: 'none' })
+    },
   })
 }
 

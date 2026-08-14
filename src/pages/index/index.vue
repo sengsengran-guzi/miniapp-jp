@@ -192,13 +192,23 @@ function onBannerTap(link: unknown) {
 function onEventTap(event: GzJpEventMpVO) {
   uni.navigateTo({
     url: buildEventRoute(event),
-    fail: () => uni.showToast({ title: t('home.eventDetailComingSoon'), icon: 'none' }),
+    fail: (err) => {
+      console.error('[jp-home] 场详情跳转失败（路由 bug，不是未完工）', buildEventRoute(event), err)
+      uni.showToast({ title: t('home.eventOpenFailed'), icon: 'none' })
+    },
   })
 }
 
 /**
  * 点订单入口 → 订单列表页（需登录：游客点这里会弹协议同意 sheet 走微信登录）。
- * 目标页由 <b>GZ-JP-205</b> 交付；未上线期间同样兜 toast。
+ *
+ * <p><b>fail 分支不许再说「功能即将上线」</b>：订单页 GZ-JP-205 早已交付，
+ * 这里跳不过去只可能是<b>路由写错或页面没注册</b>，是 bug 不是未完工。
+ * 之前那句友好文案把一个真 bug（常量写成了没注册的 {@code /pages/order/index}）
+ * 伪装成「这功能还没做」，藏了整整一期 —— 客人付完款回不到订单列表，
+ * 而界面告诉他这很正常。详见 {@code src/pages.routes.test.ts}。</p>
+ *
+ * <p>所以 fail 里<b>必须打 error 日志</b>（真机 vConsole 看得见），文案也要说「失败」而不是「没做」。</p>
  */
 async function onOrderEntryTap() {
   if (!(await ensureLoggedIn())) {
@@ -206,7 +216,10 @@ async function onOrderEntryTap() {
   }
   uni.navigateTo({
     url: ORDER_LIST_ROUTE,
-    fail: () => uni.showToast({ title: t('home.orderComingSoon'), icon: 'none' }),
+    fail: (err) => {
+      console.error('[jp-home] 订单列表跳转失败（路由 bug，不是未完工）', ORDER_LIST_ROUTE, err)
+      uni.showToast({ title: t('home.orderOpenFailed'), icon: 'none' })
+    },
   })
 }
 

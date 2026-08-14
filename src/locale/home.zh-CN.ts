@@ -47,10 +47,17 @@ const homeZhCN = {
   orderSectionTitle: '我的拼团',
   orderEntryTitle: '我的订单',
   orderEntrySub: '查看拼团进度与物流',
-  /** GZ-JP-205 订单页上线前点入口的提示 */
-  orderComingSoon: '订单功能即将上线',
-  /** GZ-JP-202 场详情页上线前点场卡的提示 */
-  eventDetailComingSoon: '场详情即将上线',
+  /**
+   * 跳转失败提示 —— ★ 措辞必须是「打不开」而不是「还没做」。
+   *
+   * 这两个入口的目标页（订单 GZ-JP-205 / 场详情 GZ-JP-202）都早已交付，
+   * 跳不过去只可能是路由写错或页面没注册，是 bug。
+   * 这里曾经写的是「订单功能即将上线」，于是首页路由常量写错
+   * （指向没注册的 /pages/order/index）整整一期没人发现 ——
+   * 客人付完款回不到订单列表，而界面还告诉他这功能没上线。
+   */
+  orderOpenFailed: '订单打不开了，请退出重进试试',
+  eventOpenFailed: '这一场打不开了，请退出重进试试',
 } as const
 
 export type HomeMessageKey = keyof typeof homeZhCN

@@ -121,6 +121,8 @@ const FLOWS = {
   cart: () => import('./flows/cart.mjs'),
   checkout: () => import('./flows/checkout.mjs'),
   orders: () => import('./flows/orders.mjs'),
+  // 只验「人点得到」，不验页面内容 —— 其它 flow 全是程序化直达目的地，对可达性集体失明
+  reachability: () => import('./flows/reachability.mjs'),
 }
 
 /**
